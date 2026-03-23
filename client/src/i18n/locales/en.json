@@ -1,0 +1,306 @@
+{
+  "app": {
+    "name": "VideoMeet"
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "newMeeting": "New Meeting",
+    "joinMeeting": "Join Meeting",
+    "meetings": "Meetings",
+    "recordings": "Recordings",
+    "settings": "Settings",
+    "users": "Users"
+  },
+  "ui": {
+    "language": "Language",
+    "logout": "Logout",
+    "profile": "Profile",
+    "menu": "Menu",
+    "switchToLight": "Switch to light mode",
+    "switchToDark": "Switch to dark mode"
+  },
+  "common": {
+    "id": "ID",
+    "loading": "Loading...",
+    "saving": "Saving...",
+    "cancel": "Cancel",
+    "close": "Close",
+    "back": "Back",
+    "goBack": "Go Back",
+    "new": "New",
+    "edit": "Edit",
+    "delete": "Delete",
+    "actions": "Actions",
+    "action": "Action",
+    "title": "Title",
+    "date": "Date",
+    "status": "Status",
+    "participants": "Participants",
+    "host": "Host",
+    "meetingId": "Meeting ID",
+    "scheduledAt": "Scheduled At",
+    "start": "Start",
+    "copyLink": "Copy Link",
+    "copied": "Copied!",
+    "joinNow": "Join Now",
+    "chat": "Chat",
+    "people": "People",
+    "you": "You",
+    "hide": "Hide",
+    "panel": "Panel",
+    "leave": "Leave",
+    "saveChanges": "Save Changes",
+    "view": "View",
+    "download": "Download",
+    "duration": "Duration",
+    "size": "Size",
+    "camera": "Camera",
+    "microphone": "Microphone",
+    "micShort": "Mic"
+  },
+  "pages": {
+    "login": {
+      "subtitle": "Sign in to your account",
+      "username": "Username",
+      "usernamePlaceholder": "Enter username",
+      "password": "Password",
+      "passwordPlaceholder": "Enter password",
+      "signIn": "Sign In",
+      "signingIn": "Signing in...",
+      "noAccount": "Don't have an account?",
+      "register": "Register",
+      "errors": {
+        "failed": "Login failed. Check your credentials."
+      }
+    },
+    "register": {
+      "subtitle": "Create your account",
+      "fullName": "Full Name",
+      "fullNamePlaceholder": "John Doe",
+      "email": "Email",
+      "emailPlaceholder": "john@example.com",
+      "username": "Username",
+      "usernamePlaceholder": "johndoe",
+      "password": "Password",
+      "passwordPlaceholder": "Min 8 characters",
+      "confirmPassword": "Confirm Password",
+      "confirmPasswordPlaceholder": "Repeat password",
+      "createAccount": "Create Account",
+      "creating": "Creating account...",
+      "haveAccount": "Already have an account?",
+      "signIn": "Sign In",
+      "errors": {
+        "failed": "Registration failed"
+      }
+    },
+    "dashboard": {
+      "welcomeBack": "Welcome back, {{name}}!",
+      "overview": "Here's an overview of your activity",
+      "startNow": "Start now",
+      "jumpIn": "Jump in fast",
+      "upcoming": "Upcoming Meetings",
+      "noUpcoming": "No upcoming meetings.",
+      "scheduleOne": "Schedule one ->",
+      "cards": {
+        "created": "Meetings Created",
+        "joined": "Meetings Joined",
+        "recordings": "Recordings",
+        "users": "Total Users"
+      }
+    },
+    "joinMeeting": {
+      "title": "Join a Meeting",
+      "subtitle": "Enter a meeting ID or paste a meeting link",
+      "fieldLabel": "Meeting ID or Link",
+      "placeholder": "e.g. abc-defg-hij or full meeting URL",
+      "errors": {
+        "invalidInput": "Please enter a valid meeting ID or link"
+      }
+    },
+    "meetings": {
+      "title": "Meeting History",
+      "subtitle": "All meetings you have hosted or joined",
+      "loading": "Loading meetings...",
+      "empty": "No meetings found yet."
+    },
+    "newMeeting": {
+      "title": "New Meeting",
+      "subtitle": "Choose how you want to meet",
+      "instant": "Instant Meeting",
+      "instantDesc": "Start a meeting right now with a generated link",
+      "scheduleMeeting": "Schedule Meeting",
+      "scheduleDesc": "Plan a meeting for a specific date and time",
+      "readyTitle": "Meeting Ready!",
+      "readySubtitle": "Share the link with participants",
+      "meetingTitle": "Meeting Title",
+      "meetingTitlePlaceholder": "Enter meeting title",
+      "displayName": "Display Name",
+      "scheduleTitle": "Schedule Meeting",
+      "scheduleSubtitle": "Plan a meeting for later",
+      "schedulePlaceholder": "Weekly Standup",
+      "dateTime": "Date & Time",
+      "descriptionOptional": "Description (optional)",
+      "descriptionPlaceholder": "Meeting agenda...",
+      "schedule": "Schedule",
+      "scheduling": "Scheduling...",
+      "instantDefaultTitle": "Instant Meeting",
+      "meetingFallbackTitle": "Meeting",
+      "errors": {
+        "createFailed": "Failed to create meeting. Try again.",
+        "saveTitleFailed": "Failed to save meeting title",
+        "scheduleFailed": "Failed to schedule meeting."
+      }
+    },
+    "prejoin": {
+      "subtitle": "Set up your camera and microphone before joining",
+      "cameraNotAvailable": "Camera not available",
+      "cameraOff": "Camera is off",
+      "muteMic": "Mute mic",
+      "unmuteMic": "Unmute mic",
+      "turnOffCamera": "Turn off camera",
+      "turnOnCamera": "Turn on camera",
+      "micOn": "Mic on",
+      "micOff": "Mic off",
+      "cameraOn": "Camera on",
+      "cameraOffStatus": "Camera off",
+      "joiningAs": "Joining as",
+      "joining": "Joining...",
+      "deviceSettings": "Device Settings"
+    },
+    "recordings": {
+      "title": "Recordings",
+      "subtitle": "All meeting recordings you have made",
+      "loading": "Loading recordings...",
+      "empty": "No recordings yet. Start a meeting and record it!",
+      "confirmDelete": "Delete this recording?",
+      "hintVolume": "Use the volume slider in the player bar to adjust audio",
+      "hintKeys": "Space to play/pause · Left/Right to seek · F for fullscreen"
+    },
+    "settings": {
+      "title": "Settings",
+      "subtitle": "Manage your profile preferences and account data",
+      "avatar": "Avatar image",
+      "name": "Name",
+      "phone": "Phone number",
+      "usernameAdmin": "Username (Admin only)",
+      "passwordAdmin": "New password (Admin only)",
+      "success": "Settings updated successfully",
+      "updateFailed": "Update failed"
+    },
+    "users": {
+      "subtitle": "Manage users and account details",
+      "search": "Search users",
+      "loading": "Loading users...",
+      "empty": "No users found",
+      "addUser": "Add User",
+      "editUser": "Edit User",
+      "createUser": "Create User",
+      "name": "Name",
+      "email": "Email",
+      "password": "Password",
+      "passwordKeepHint": "(leave blank to keep unchanged)",
+      "phone": "Phone number",
+      "avatar": "Avatar image",
+      "userType": "User Type",
+      "createdAt": "Created At",
+      "confirmDelete": "Delete user {{name}}?",
+      "errors": {
+        "nameRequired": "Name is required",
+        "emailRequired": "Email is required",
+        "phoneRequired": "Phone is required",
+        "passwordRequired": "Password is required",
+        "avatarRequired": "Avatar is required",
+        "saveFailed": "Save failed"
+      }
+    },
+    "meetingRoom": {
+      "hostEnded": "The host has ended the meeting.",
+      "confirmEndAll": "End meeting for everyone?",
+      "recordingSaved": "Recording saved!",
+      "noActiveStreams": "No active camera streams to record.",
+      "copyMeetingLink": "Copy meeting link",
+      "togglePanel": "Toggle panel",
+      "micOnStatus": "Mic on",
+      "mutedStatus": "Muted",
+      "cameraOnStatus": "Camera on",
+      "cameraOffStatus": "Camera off",
+      "handRaised": "Hand raised",
+      "waitingForScreen": "Waiting for screen...",
+      "presenting": "{{name}} is presenting",
+      "connecting": "Connecting to meeting...",
+      "waitingForHost": "Waiting for host to start",
+      "autoAdmit": "You'll be admitted automatically.",
+      "endForAll": "End for all",
+      "noMessages": "No messages yet.",
+      "sayHello": "Say hello!",
+      "typeMessage": "Type a message...",
+      "mute": "Mute",
+      "unmute": "Unmute",
+      "stopVideo": "Stop video",
+      "startVideo": "Start video",
+      "stopShare": "Stop share",
+      "shareScreen": "Share screen",
+      "lowerHand": "Lower hand",
+      "raiseHand": "Raise hand",
+      "stopRec": "Stop rec",
+      "record": "Record",
+      "closeBoard": "Close board",
+      "whiteboard": "Whiteboard",
+      "effects": "Effects",
+      "whiteboardPanel": {
+        "textPlaceholder": "Type and press Enter",
+        "undo": "Undo",
+        "clearBoard": "Clear board",
+        "hostPresenting": "Host is presenting the whiteboard",
+        "sizeN": "Size {{size}}",
+        "tools": {
+          "pencil": "Pencil",
+          "line": "Line",
+          "rectangle": "Rectangle",
+          "ellipse": "Ellipse",
+          "arrow": "Arrow",
+          "text": "Text",
+          "eraser": "Eraser"
+        }
+      },
+      "effectsPanel": {
+        "title": "Backgrounds and Effects",
+        "cameraOffHint": "Turn on your camera to preview effects.",
+        "reset": "Reset",
+        "done": "Done",
+        "tabs": {
+          "backgrounds": "Backgrounds",
+          "filters": "Filters",
+          "appearance": "Appearance"
+        },
+        "background": {
+          "noBackground": "No background",
+          "blurBackground": "Blur background",
+          "slightBlur": "Slight blur",
+          "customImage": "Custom image",
+          "uploadedImage": "Uploaded image",
+          "sceneN": "Scene {{index}}",
+          "short": {
+            "none": "No BG",
+            "blur": "Blur",
+            "slight": "Slight",
+            "upload": "Upload"
+          }
+        },
+        "filters": {
+          "none": "None",
+          "brightness": "Brightness",
+          "contrast": "Contrast",
+          "warm": "Warm",
+          "cool": "Cool",
+          "grayscale": "Grayscale"
+        },
+        "appearance": {
+          "cameraBrightness": "Camera brightness",
+          "softLight": "Soft light",
+          "mirrorVideo": "Mirror video"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "app": {
+    "name": "ВидеоМит"
+  },
+  "nav": {
+    "dashboard": "Панель",
+    "newMeeting": "Новая встреча",
+    "joinMeeting": "Присоединиться",
+    "meetings": "Встречи",
+    "recordings": "Записи",
+    "settings": "Настройки",
+    "users": "Пользователи"
+  },
+  "ui": {
+    "language": "Язык",
+    "logout": "Выйти",
+    "profile": "Профиль",
+    "menu": "Меню",
+    "switchToLight": "Переключить на светлую тему",
+    "switchToDark": "Переключить на тёмную тему"
+  }
+}

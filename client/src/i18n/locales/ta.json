@@ -1,0 +1,22 @@
+{
+  "app": {
+    "name": "வீடியோமீட்"
+  },
+  "nav": {
+    "dashboard": "டாஷ்போர்டு",
+    "newMeeting": "புதிய கூட்டம்",
+    "joinMeeting": "கூட்டத்தில் சேர",
+    "meetings": "கூட்டங்கள்",
+    "recordings": "பதிவுகள்",
+    "settings": "அமைப்புகள்",
+    "users": "பயனர்கள்"
+  },
+  "ui": {
+    "language": "மொழி",
+    "logout": "வெளியேறு",
+    "profile": "சுயவிவரம்",
+    "menu": "மெனு",
+    "switchToLight": "ஒளி நிலைக்கு மாற்று",
+    "switchToDark": "இருள் நிலைக்கு மாற்று"
+  }
+}

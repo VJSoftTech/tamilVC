@@ -1,0 +1,22 @@
+{
+  "app": {
+    "name": "VideoMeet"
+  },
+  "nav": {
+    "dashboard": "Gösterge Paneli",
+    "newMeeting": "Yeni Toplantı",
+    "joinMeeting": "Toplantıya Katıl",
+    "meetings": "Toplantılar",
+    "recordings": "Kayıtlar",
+    "settings": "Ayarlar",
+    "users": "Kullanıcılar"
+  },
+  "ui": {
+    "language": "Dil",
+    "logout": "Çıkış",
+    "profile": "Profil",
+    "menu": "Menü",
+    "switchToLight": "Açık moda geç",
+    "switchToDark": "Koyu moda geç"
+  }
+}

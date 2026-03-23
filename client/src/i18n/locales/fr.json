@@ -1,0 +1,22 @@
+{
+  "app": {
+    "name": "VideoMeet"
+  },
+  "nav": {
+    "dashboard": "Tableau de bord",
+    "newMeeting": "Nouvelle réunion",
+    "joinMeeting": "Rejoindre une réunion",
+    "meetings": "Réunions",
+    "recordings": "Enregistrements",
+    "settings": "Paramètres",
+    "users": "Utilisateurs"
+  },
+  "ui": {
+    "language": "Langue",
+    "logout": "Déconnexion",
+    "profile": "Profil",
+    "menu": "Menu",
+    "switchToLight": "Passer au mode clair",
+    "switchToDark": "Passer au mode sombre"
+  }
+}
