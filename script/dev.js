@@ -25,7 +25,9 @@ const server = run('node', ['--watch', 'server/index.js'], {
 
 // Give server a moment to bind, then start Vite
 setTimeout(() => {
-  const vite = run('vite', ['--config', 'vite.config.js']);
+  // Use npx so the locally-installed vite binary is found on all platforms
+  // (vite is not guaranteed to be in the global PATH)
+  const vite = run('npx', ['vite', '--config', 'vite.config.js']);
 
   process.on('SIGINT',  () => { server.kill(); vite.kill(); process.exit(0); });
   process.on('SIGTERM', () => { server.kill(); vite.kill(); process.exit(0); });

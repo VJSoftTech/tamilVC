@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import { meetingAPI } from '../services/api.js';
 import { useTranslation } from 'react-i18next';
+import { setHandoffStream } from '../utils/streamHandoff.js';
 
 export default function PreJoin() {
   const { meetingId } = useParams();
@@ -13,6 +14,7 @@ export default function PreJoin() {
 
   const videoRef   = useRef(null);
   const streamRef  = useRef(null);
+  const watermarkInputRef = useRef(null);
 
   const [camOn,      setCamOn]      = useState(true);
   const [micOn,      setMicOn]      = useState(true);
@@ -23,6 +25,10 @@ export default function PreJoin() {
   const [selectedCam,setSelectedCam]= useState('');
   const [selectedMic,setSelectedMic]= useState('');
   const [showDevices,setShowDevices]= useState(false);
+  const [watermarkDataUrl, setWatermarkDataUrl] = useState('');
+  const [watermarkName, setWatermarkName] = useState('');
+  const [guestDisplayName, setGuestDisplayName] = useState('');
+  const [guestError, setGuestError] = useState('');
 
   // Load meeting info
   useEffect(() => {
@@ -40,24 +46,33 @@ export default function PreJoin() {
   const startPreview = async (camId, micId) => {
     stopPreview();
     setCamError(false);
+    const videoConstraint = camId ? { deviceId: { exact: camId } } : { width: 1280, height: 720, facingMode: 'user' };
+    const audioConstraint = micId ? { deviceId: { exact: micId } } : true;
+    let stream;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: camId ? { deviceId: { exact: camId } } : { width: 1280, height: 720, facingMode: 'user' },
-        audio: micId ? { deviceId: { exact: micId } } : true,
-      });
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
+      stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraint, audio: audioConstraint });
+    } catch {
+      // Camera may be denied/busy — try audio-only so mic still works
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: false, audio: audioConstraint });
+        setCamError(true);
+      } catch {
+        setCamError(true);
+        return;
       }
-      // Enumerate devices after permission granted
+    }
+    streamRef.current = stream;
+    if (videoRef.current) {
+      videoRef.current.srcObject = stream;
+    }
+    // Enumerate devices after permission granted
+    try {
       const devList = await navigator.mediaDevices.enumerateDevices();
       setDevices({
         cameras: devList.filter(d => d.kind === 'videoinput'),
         mics:    devList.filter(d => d.kind === 'audioinput'),
       });
-    } catch {
-      setCamError(true);
-    }
+    } catch {}
   };
 
   const stopPreview = () => {
@@ -118,16 +133,55 @@ export default function PreJoin() {
     );
   };
 
-  const handleJoin = () => {
-    setJoining(true);
-    // Pass media prefs via sessionStorage so MeetingRoom picks them up
+  const handleJoin = async () => {
+    if (!auth.user) {
+      const name = guestDisplayName.trim();
+      if (!name) { setGuestError('Please enter your display name'); return; }
+      setJoining(true);
+      setGuestError('');
+      try {
+        const res = await meetingAPI.guestJoin(meetingId, { displayName: name });
+        const { token, user: guestUser, meeting, is_host, waiting } = res.data;
+        auth.loginAsGuest(guestUser, token);
+        sessionStorage.setItem('guestJoinResult', JSON.stringify({ meeting, is_host, waiting }));
+      } catch (e) {
+        setGuestError(e.response?.data?.message || 'Failed to join meeting');
+        setJoining(false);
+        return;
+      }
+    } else {
+      setJoining(true);
+    }
     sessionStorage.setItem('prejoin', JSON.stringify({
       camOn, micOn,
       camId: selectedCam,
       micId: selectedMic,
+      watermarkImage: watermarkDataUrl || null,
+      watermarkPosition: 'bottom-right',
     }));
-    stopPreview();
+    // Hand the live stream to MeetingRoom instead of stopping and re-acquiring it.
+    // stopPreview() would release the camera; getUserMedia immediately after can
+    // fail on Windows/Chrome (NotReadableError) while the device is still releasing.
+    if (streamRef.current) {
+      setHandoffStream(streamRef.current);
+      streamRef.current = null; // prevent the useEffect cleanup from stopping it
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
     navigate(`/meet/${meetingId}`);
+  };
+
+  const onWatermarkSelected = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setWatermarkDataUrl(typeof reader.result === 'string' ? reader.result : '');
+      setWatermarkName(file.name);
+    };
+    reader.readAsDataURL(file);
   };
 
   return (
@@ -183,7 +237,7 @@ export default function PreJoin() {
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     fontSize: 28, fontWeight: 800, color: '#fff',
                   }}>
-                    {auth?.user?.name?.[0]?.toUpperCase() || '?'}
+                    {(auth?.user?.name || guestDisplayName)?.[0]?.toUpperCase() || '?'}
                   </div>
                   <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
                     {camError ? t('pages.prejoin.cameraNotAvailable') : t('pages.prejoin.cameraOff')}
@@ -198,7 +252,7 @@ export default function PreJoin() {
                 background: 'linear-gradient(transparent, rgba(0,0,0,0.7))',
                 fontSize: 13, fontWeight: 600, color: '#fff',
               }}>
-                {auth?.user?.name} ({t('common.you')})
+                {auth?.user?.name || guestDisplayName || '...'} ({t('common.you')})
               </div>
             </div>
 
@@ -272,19 +326,93 @@ export default function PreJoin() {
               <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 8 }}>
                 {t('pages.prejoin.joiningAs')}
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
-                <div style={{
-                  width: 34, height: 34, borderRadius: '50%',
-                  background: 'linear-gradient(135deg, var(--primary), #a78bfa)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 14, fontWeight: 700, color: '#fff',
-                }}>
-                  {auth?.user?.name?.[0]?.toUpperCase()}
+              {auth.user ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
+                  <div style={{
+                    width: 34, height: 34, borderRadius: '50%',
+                    background: 'linear-gradient(135deg, var(--primary), #a78bfa)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 14, fontWeight: 700, color: '#fff',
+                  }}>
+                    {auth?.user?.name?.[0]?.toUpperCase()}
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>{auth?.user?.name}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>@{auth?.user?.username}</div>
+                  </div>
                 </div>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 600 }}>{auth?.user?.name}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>@{auth?.user?.username}</div>
+              ) : (
+                <div style={{ marginBottom: 20 }}>
+                  <input
+                    type="text"
+                    value={guestDisplayName}
+                    onChange={e => { setGuestDisplayName(e.target.value); setGuestError(''); }}
+                    placeholder="Your display name"
+                    maxLength={50}
+                    style={{
+                      width: '100%', padding: '9px 12px', boxSizing: 'border-box',
+                      background: 'var(--surface2)', border: `1px solid ${guestError ? '#f87171' : 'var(--border)'}`,
+                      borderRadius: 8, color: 'var(--text)', fontSize: 13, outline: 'none',
+                    }}
+                  />
+                  {guestError && (
+                    <p style={{ color: '#f87171', fontSize: 12, marginTop: 4 }}>{guestError}</p>
+                  )}
                 </div>
+              )}
+
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.4px', marginBottom: 8 }}>
+                  Watermark Image
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <button
+                    type="button"
+                    onClick={() => watermarkInputRef.current?.click()}
+                    style={{
+                      border: '1px solid var(--border)',
+                      background: 'var(--surface2)',
+                      color: 'var(--text)',
+                      borderRadius: 10,
+                      padding: '8px 12px',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    🖼 Upload
+                  </button>
+                  <input
+                    ref={watermarkInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={onWatermarkSelected}
+                    style={{ display: 'none' }}
+                  />
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                    {watermarkName || 'Optional'}
+                  </span>
+                </div>
+                {watermarkDataUrl && (
+                  <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <img
+                      src={watermarkDataUrl}
+                      alt="watermark"
+                      style={{
+                        width: 56,
+                        height: 56,
+                        objectFit: 'contain',
+                        background: 'var(--surface2)',
+                        border: '1px solid var(--border)',
+                        borderRadius: 8,
+                        padding: 6,
+                      }}
+                    />
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                      Default position: bottom-right
+                    </span>
+                  </div>
+                )}
               </div>
 
               <button

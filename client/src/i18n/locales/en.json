@@ -143,6 +143,7 @@
       "descriptionPlaceholder": "Meeting agenda...",
       "schedule": "Schedule",
       "scheduling": "Scheduling...",
+      "creating": "Creating instant meeting...",
       "instantDefaultTitle": "Instant Meeting",
       "meetingFallbackTitle": "Meeting",
       "errors": {
@@ -216,6 +217,8 @@
     "meetingRoom": {
       "hostEnded": "The host has ended the meeting.",
       "confirmEndAll": "End meeting for everyone?",
+      "leaveTitle": "Leave meeting?",
+      "leaveConfirm": "Are you sure you want to leave this meeting?",
       "recordingSaved": "Recording saved!",
       "noActiveStreams": "No active camera streams to record.",
       "copyMeetingLink": "Copy meeting link",

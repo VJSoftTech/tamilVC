@@ -15,7 +15,17 @@ const TOOLS = {
 const COLORS = ['#ffffff','#f87171','#fb923c','#facc15','#4ade80','#34d399','#38bdf8','#818cf8','#e879f9','#000000'];
 const SIZES  = [2, 4, 8, 14, 22];
 
+// ─── Virtual canvas space ─────────────────────────────────────────
+// The canvas BUFFER is always VIRT_W×VIRT_H.
+// CSS dimensions scale it to fit any screen — the browser handles it.
+// Every stroke is stored and transmitted in these buffer coordinates.
+// A shape drawn as a circle (equal width/height in buffer) always renders
+// as a circle on every device because both use the same 16:9 buffer.
+const VIRT_W = 1600;
+const VIRT_H = 900;
+
 // ─── Draw helpers ─────────────────────────────────────────────────
+// All coordinates are already in VIRT_W×VIRT_H buffer space — no scaling needed.
 function drawStroke(ctx, stroke) {
   const { tool, color, size, points, text, x1, y1, x2, y2 } = stroke;
   ctx.save();
@@ -80,8 +90,8 @@ function drawStroke(ctx, stroke) {
   ctx.restore();
 }
 
-function redrawAll(ctx, strokes, w, h) {
-  ctx.clearRect(0, 0, w, h);
+function redrawAll(ctx, strokes) {
+  ctx.clearRect(0, 0, VIRT_W, VIRT_H);
   strokes.forEach(s => drawStroke(ctx, s));
 }
 
@@ -89,7 +99,7 @@ function redrawAll(ctx, strokes, w, h) {
 // isHost  — shows the toolbar; viewers see a read-only canvas
 // socket  — socket.io instance for broadcasting
 // meetingId — for scoping socket events
-const Whiteboard = forwardRef(function Whiteboard({ isHost, socket, meetingId }, ref) {
+const Whiteboard = forwardRef(function Whiteboard({ isHost, socketRef, meetingId }, ref) {
   const { t } = useTranslation();
   const canvasRef   = useRef(null);
   const strokesRef  = useRef([]);   // committed strokes for replay
@@ -103,77 +113,54 @@ const Whiteboard = forwardRef(function Whiteboard({ isHost, socket, meetingId },
   const [textInput,  setTextInput]  = useState('');
   const [textPos,    setTextPos]    = useState(null); // {x,y} awaiting text entry
 
-  // Expose getStrokes so MeetingRoom can sync to late joiners
+  // Set the canvas buffer to exactly VIRT_W×VIRT_H once on mount.
+  // CSS width:100%/height:100% scales it visually — no ResizeObserver needed.
+  // Done in useLayoutEffect (sync, before paint) so the canvas is always
+  // correctly sized before any stroke can be drawn or received.
+  React.useLayoutEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    canvas.width  = VIRT_W;
+    canvas.height = VIRT_H;
+  }, []);
+
+  // Expose methods so MeetingRoom can sync strokes and apply remote events
   useImperativeHandle(ref, () => ({
     getStrokes: () => strokesRef.current,
     applyStrokes: (strokes) => {
       strokesRef.current = strokes;
       const canvas = canvasRef.current;
-      if (canvas) redrawAll(canvas.getContext('2d'), strokes, canvas.width, canvas.height);
+      if (canvas) redrawAll(canvas.getContext('2d'), strokes);
     },
-  }), []);
-
-  // Resize canvas to fill its container
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ro = new ResizeObserver(() => {
-      const { width, height } = canvas.getBoundingClientRect();
-      // Preserve existing content at new size
-      const tmp = document.createElement('canvas');
-      tmp.width  = canvas.width;
-      tmp.height = canvas.height;
-      tmp.getContext('2d').drawImage(canvas, 0, 0);
-      canvas.width  = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      redrawAll(ctx, strokesRef.current, width, height);
-    });
-    ro.observe(canvas);
-    return () => ro.disconnect();
-  }, []);
-
-  // ── Receive remote draw events ────────────────────────────────────
-  useEffect(() => {
-    if (!socket) return;
-
-    const onDraw = ({ stroke }) => {
+    receiveStroke: (stroke) => {
       strokesRef.current.push(stroke);
       const canvas = canvasRef.current;
       if (canvas) drawStroke(canvas.getContext('2d'), stroke);
-    };
-    const onClear = () => {
+    },
+    clearBoard: () => {
       strokesRef.current = [];
       const canvas = canvasRef.current;
-      if (canvas) canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
-    };
-    const onSync = ({ strokes }) => {
-      strokesRef.current = strokes;
-      const canvas = canvasRef.current;
-      if (canvas) redrawAll(canvas.getContext('2d'), strokes, canvas.width, canvas.height);
-    };
+      if (canvas) canvas.getContext('2d').clearRect(0, 0, VIRT_W, VIRT_H);
+    },
+  }), []);
 
-    socket.on('whiteboard:draw',  onDraw);
-    socket.on('whiteboard:clear', onClear);
-    socket.on('whiteboard:sync',  onSync);
-    return () => {
-      socket.off('whiteboard:draw',  onDraw);
-      socket.off('whiteboard:clear', onClear);
-      socket.off('whiteboard:sync',  onSync);
-    };
-  }, [socket]);
+  // Remote draw/clear/sync events are handled by MeetingRoom via ref methods
 
   // ── Pointer helpers ───────────────────────────────────────────────
+  // Returns position in virtual (VIRT_W × VIRT_H) coordinates
   const getPos = (e) => {
     const r = canvasRef.current.getBoundingClientRect();
     const src = e.touches ? e.touches[0] : e;
-    return { x: src.clientX - r.left, y: src.clientY - r.top };
+    return {
+      x: (src.clientX - r.left) / r.width  * VIRT_W,
+      y: (src.clientY - r.top)  / r.height * VIRT_H,
+    };
   };
 
   const commitAndBroadcast = useCallback((stroke) => {
     strokesRef.current.push(stroke);
-    socket?.connected && socket.emit('whiteboard:draw', { meetingId, stroke });
-  }, [socket, meetingId]);
+    socketRef?.current?.emit('whiteboard:draw', { meetingId, stroke });
+  }, [socketRef, meetingId]);
 
   // ── Pointer down ──────────────────────────────────────────────────
   const onPointerDown = useCallback((e) => {
@@ -209,7 +196,7 @@ const Whiteboard = forwardRef(function Whiteboard({ isHost, socket, meetingId },
 
     if (tool === 'pencil' || tool === 'eraser') {
       s.points.push(pos);
-      // Draw incremental segment only
+      // Draw incremental segment directly in buffer coords
       ctx.save();
       ctx.strokeStyle = tool === 'eraser' ? '#1e1e2e' : s.color;
       ctx.lineWidth   = s.size;
@@ -226,7 +213,7 @@ const Whiteboard = forwardRef(function Whiteboard({ isHost, socket, meetingId },
       // Shape preview: redraw committed strokes then overlay current ghost
       s.x2 = pos.x;
       s.y2 = pos.y;
-      redrawAll(ctx, strokesRef.current, canvas.width, canvas.height);
+      redrawAll(ctx, strokesRef.current);
       drawStroke(ctx, s);
     }
   }, [tool]);
@@ -246,7 +233,7 @@ const Whiteboard = forwardRef(function Whiteboard({ isHost, socket, meetingId },
     // Final draw + commit
     const canvas = canvasRef.current;
     const ctx    = canvas.getContext('2d');
-    redrawAll(ctx, strokesRef.current, canvas.width, canvas.height);
+    redrawAll(ctx, strokesRef.current);
     drawStroke(ctx, s);
     commitAndBroadcast(s);
     currentRef.current = null;
@@ -267,35 +254,41 @@ const Whiteboard = forwardRef(function Whiteboard({ isHost, socket, meetingId },
   const handleClear = useCallback(() => {
     strokesRef.current = [];
     const canvas = canvasRef.current;
-    canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
-    socket?.connected && socket.emit('whiteboard:clear', { meetingId });
-  }, [socket, meetingId]);
+    canvas.getContext('2d').clearRect(0, 0, VIRT_W, VIRT_H);
+    socketRef?.current?.emit('whiteboard:clear', { meetingId });
+  }, [socketRef, meetingId]);
 
   // ── Undo ──────────────────────────────────────────────────────────
   const handleUndo = useCallback(() => {
     if (!strokesRef.current.length) return;
     strokesRef.current.pop();
     const canvas = canvasRef.current;
-    redrawAll(canvas.getContext('2d'), strokesRef.current, canvas.width, canvas.height);
-    // Broadcast the updated stroke list as a sync so all peers undo in one shot
-    socket?.connected && socket.emit('whiteboard:sync', {
+    redrawAll(canvas.getContext('2d'), strokesRef.current);
+    // Broadcast virtual-coord strokes so all peers undo in one shot
+    socketRef?.current?.emit('whiteboard:sync', {
       meetingId,
-      to: '__room__', // server handles broadcasting to room
+      to: '__room__',
       strokes: strokesRef.current,
     });
-  }, [socket, meetingId]);
+  }, [socketRef, meetingId]);
 
   const cursor = isHost
     ? (tool === 'eraser' ? 'cell' : tool === 'text' ? 'text' : 'crosshair')
     : 'default';
 
   return (
-    <div style={{ position: 'relative', width: '100%', height: '100%', background: '#1e1e2e', borderRadius: 12, overflow: 'hidden' }}>
+    <div style={{
+      position: 'relative',
+      width: '100%', aspectRatio: '16/9',
+      maxWidth: '100%', maxHeight: '100%',
+      margin: 'auto',
+      background: '#1e1e2e', borderRadius: 12, overflow: 'hidden',
+    }}>
 
       {/* ── Canvas ── */}
       <canvas
         ref={canvasRef}
-        style={{ display: 'block', width: '100%', height: '100%', cursor }}
+        style={{ display: 'block', width: '100%', height: '100%', cursor, touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -306,8 +299,8 @@ const Whiteboard = forwardRef(function Whiteboard({ isHost, socket, meetingId },
       {textPos && (
         <div style={{
           position: 'absolute',
-          left: textPos.x, top: textPos.y - 20,
-          zIndex: 20,
+          left: `${textPos.x / VIRT_W * 100}%`,
+          top:  `calc(${textPos.y / VIRT_H * 100}% - 20px)`,          zIndex: 20,
         }}>
           <input
             ref={textInputRef}
@@ -335,7 +328,8 @@ const Whiteboard = forwardRef(function Whiteboard({ isHost, socket, meetingId },
           background: 'rgba(15,15,30,0.92)', backdropFilter: 'blur(10px)',
           border: '1px solid rgba(255,255,255,0.1)',
           borderRadius: 40, padding: '6px 14px',
-          flexWrap: 'wrap', justifyContent: 'center',
+          flexWrap: 'nowrap', overflowX: 'auto', WebkitOverflowScrolling: 'touch',
+          scrollbarWidth: 'none', msOverflowStyle: 'none',
           maxWidth: 'calc(100% - 24px)',
           zIndex: 10,
           boxShadow: '0 4px 24px rgba(0,0,0,0.5)',

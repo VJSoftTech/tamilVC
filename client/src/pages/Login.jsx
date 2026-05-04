@@ -31,7 +31,7 @@ export default function Login() {
     <div className="auth-page">
       <div className="auth-card">
         <div className="auth-logo">
-          <h1>🎥 VideoMeet</h1>
+          <h1>🎥 பேசு தமிழ்</h1>
           <span>{t('pages.login.subtitle')}</span>
         </div>
 

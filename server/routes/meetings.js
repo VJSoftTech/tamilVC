@@ -1,16 +1,16 @@
 import { Router } from 'express';
+import jwt from 'jsonwebtoken';
 import { db } from '../db/index.js';
 import { meetings, meetingParticipants, recordings, users } from '../../shared/schema.js';
 import { eq, and, or, isNull, gt, desc, count } from 'drizzle-orm';
-import { authMiddleware } from '../middleware/auth.js';
+import { authMiddleware, guestOrAuthMiddleware } from '../middleware/auth.js';
 
 const router = Router();
 
 async function generateMeetingId() {
-  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-  const rand  = (n) => Array.from({ length: n }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
   while (true) {
-    const id = `${rand(3)}-${rand(4)}-${rand(3)}`;
+    // 6-digit number: 100000–999999
+    const id = String(Math.floor(100000 + Math.random() * 900000));
     const [exists] = await db.select().from(meetings).where(eq(meetings.meetingId, id));
     if (!exists) return id;
   }
@@ -35,6 +35,45 @@ router.get('/:meetingId/info', async (req, res) => {
 
     const meeting = { ...row, meeting_id: row.meetingId, host: { id: row.hostId, name: row.hostName, username: row.hostUsername } };
     res.json({ meeting, host_joined: !!hostJoined });
+  } catch (err) { console.error(err); res.status(500).json({ message: 'Server error' }); }
+});
+
+// POST /api/meetings/:meetingId/guest-join  (no auth — guests use a shared link)
+router.post('/:meetingId/guest-join', async (req, res) => {
+  try {
+    const { meetingId } = req.params;
+    const displayName = String(req.body.displayName || '').trim().slice(0, 50);
+    if (!displayName) return res.status(422).json({ message: 'Display name is required' });
+
+    const [row] = await db.select({
+      id: meetings.id, meetingId: meetings.meetingId, title: meetings.title,
+      type: meetings.type, status: meetings.status, startedAt: meetings.startedAt,
+      createdAt: meetings.createdAt, hostId: meetings.hostId,
+      hostName: users.name, hostUsername: users.username,
+    }).from(meetings).innerJoin(users, eq(users.id, meetings.hostId))
+      .where(eq(meetings.meetingId, meetingId));
+
+    if (!row) return res.status(404).json({ message: 'Meeting not found' });
+    if (row.status === 'ended') return res.status(403).json({ message: 'Meeting has ended' });
+
+    const [hostJoined] = await db.select().from(meetingParticipants)
+      .where(and(eq(meetingParticipants.meetingId, meetingId), eq(meetingParticipants.userId, row.hostId), isNull(meetingParticipants.leftAt)));
+
+    const guestId = `guest_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const token = jwt.sign({ guestId, displayName, isGuest: true }, process.env.JWT_SECRET, { expiresIn: '24h' });
+
+    const meeting = {
+      ...row,
+      meeting_id: row.meetingId,
+      host: { id: row.hostId, name: row.hostName, username: row.hostUsername },
+    };
+    res.json({
+      token,
+      user: { id: guestId, name: displayName, username: displayName, isGuest: true },
+      meeting,
+      is_host: false,
+      waiting: !hostJoined,
+    });
   } catch (err) { console.error(err); res.status(500).json({ message: 'Server error' }); }
 });
 
@@ -95,7 +134,7 @@ router.post('/schedule', authMiddleware, async (req, res) => {
 });
 
 // POST /api/meetings/:meetingId/join
-router.post('/:meetingId/join', authMiddleware, async (req, res) => {
+router.post('/:meetingId/join', guestOrAuthMiddleware, async (req, res) => {
   try {
     const { meetingId } = req.params;
     const [meeting] = await db.select().from(meetings).where(eq(meetings.meetingId, meetingId));
@@ -103,7 +142,7 @@ router.post('/:meetingId/join', authMiddleware, async (req, res) => {
     if (meeting.status === 'ended') return res.status(403).json({ message: 'Meeting has ended' });
 
     const userId = req.user.id;
-    const isHost = meeting.hostId === userId;
+    const isHost = !req.user.isGuest && meeting.hostId === userId;
 
     if (!isHost) {
       const [hostJoined] = await db.select().from(meetingParticipants)
@@ -115,15 +154,16 @@ router.post('/:meetingId/join', authMiddleware, async (req, res) => {
       await db.update(meetings).set({ status: 'active', startedAt: new Date() }).where(eq(meetings.meetingId, meetingId));
     }
 
-    // Upsert participant
-    const [existing] = await db.select().from(meetingParticipants)
-      .where(and(eq(meetingParticipants.meetingId, meetingId), eq(meetingParticipants.userId, userId)));
-
-    if (existing) {
-      await db.update(meetingParticipants).set({ joinedAt: new Date(), leftAt: null, isHost })
+    // Guests have no real DB user row — skip participant upsert
+    if (!req.user.isGuest) {
+      const [existing] = await db.select().from(meetingParticipants)
         .where(and(eq(meetingParticipants.meetingId, meetingId), eq(meetingParticipants.userId, userId)));
-    } else {
-      await db.insert(meetingParticipants).values({ meetingId, userId, joinedAt: new Date(), isHost });
+      if (existing) {
+        await db.update(meetingParticipants).set({ joinedAt: new Date(), leftAt: null, isHost })
+          .where(and(eq(meetingParticipants.meetingId, meetingId), eq(meetingParticipants.userId, userId)));
+      } else {
+        await db.insert(meetingParticipants).values({ meetingId, userId, joinedAt: new Date(), isHost });
+      }
     }
 
     const [fresh] = await db.select({

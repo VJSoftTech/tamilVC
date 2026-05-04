@@ -25,3 +25,34 @@ export async function authMiddleware(req, res, next) {
     return res.status(401).json({ message: 'Invalid token' });
   }
 }
+
+// Accepts both regular JWT and guest JWT (isGuest: true)
+export async function guestOrAuthMiddleware(req, res, next) {
+  const authHeader = req.headers.authorization;
+  const raw = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : req.query.token;
+  if (!raw) return res.status(401).json({ message: 'No token provided' });
+  try {
+    const decoded = jwt.verify(raw, process.env.JWT_SECRET);
+    if (decoded.isGuest) {
+      req.user = {
+        id: decoded.guestId,
+        name: decoded.displayName,
+        username: decoded.displayName,
+        avatar: null,
+        isGuest: true,
+        userType: 'user',
+      };
+      return next();
+    }
+    const [user] = await db.select({
+      id: users.id, name: users.name, email: users.email,
+      username: users.username, avatar: users.avatar,
+      userType: users.userType, phoneNumber: users.phoneNumber,
+    }).from(users).where(eq(users.id, decoded.userId));
+    if (!user) return res.status(401).json({ message: 'User not found' });
+    req.user = user;
+    next();
+  } catch {
+    return res.status(401).json({ message: 'Invalid token' });
+  }
+}

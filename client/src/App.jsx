@@ -47,10 +47,10 @@ function AppRoutes() {
         <Route path="settings"     element={<Settings />} />
         <Route path="users"        element={<AdminRoute><Users /></AdminRoute>} />
       </Route>
-      {/* Prejoin lobby — full page, no sidebar */}
-      <Route path="/prejoin/:meetingId" element={<PrivateRoute><PreJoin /></PrivateRoute>} />
-      {/* Meeting room */}
-      <Route path="/meet/:meetingId"    element={<PrivateRoute><MeetingRoom /></PrivateRoute>} />
+      {/* Prejoin lobby — full page, no sidebar — accessible without login */}
+      <Route path="/prejoin/:meetingId" element={<PreJoin />} />
+      {/* Meeting room — accessible without login (guest join flow) */}
+      <Route path="/meet/:meetingId"    element={<MeetingRoom />} />
     </Routes>
   );
 }

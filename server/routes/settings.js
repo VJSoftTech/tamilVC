@@ -3,7 +3,7 @@ import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
 import bcrypt from 'bcryptjs';
-import { and, eq, ne, or } from 'drizzle-orm';
+import { and, eq, ne, or, sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { users } from '../../shared/schema.js';
 import { authMiddleware } from '../middleware/auth.js';
@@ -55,7 +55,7 @@ router.put('/me', authMiddleware, upload.single('avatar'), async (req, res) => {
 
     // Admin-only account controls
     if (req.user.userType === 'admin') {
-      if (req.body.username) patch.username = String(req.body.username).trim();
+      if (req.body.username) patch.username = String(req.body.username).trim().toLowerCase();
       if (req.body.password) {
         if (String(req.body.password).length < 8) {
           return res.status(422).json({ errors: { password: ['Password must be at least 8 characters'] } });
@@ -64,8 +64,11 @@ router.put('/me', authMiddleware, upload.single('avatar'), async (req, res) => {
       }
 
       if (patch.username) {
+        if (!/^[a-zA-Z0-9_-]+$/.test(patch.username)) {
+          return res.status(422).json({ errors: { username: ['Username may only contain letters, numbers, dashes and underscores'] } });
+        }
         const [hit] = await db.select({ id: users.id }).from(users)
-          .where(and(eq(users.username, patch.username), ne(users.id, req.user.id)));
+          .where(and(sql`lower(${users.username}) = ${patch.username}`, ne(users.id, req.user.id)));
         if (hit) return res.status(422).json({ errors: { username: ['Username already exists'] } });
       }
     }

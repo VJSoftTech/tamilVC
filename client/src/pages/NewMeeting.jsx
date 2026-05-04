@@ -25,7 +25,7 @@ export default function NewMeeting() {
       const res = await meetingAPI.createInstant({ title: defaultTitle });
       setInstantTitle(res.data?.meeting?.title || defaultTitle);
       setMeetingData(res.data); setView('ready');
-    } catch { setError(t('pages.newMeeting.errors.createFailed')); }
+    } catch (e) { setError(e.response?.data?.message || t('pages.newMeeting.errors.createFailed')); }
     finally { setLoading(false); }
   };
 
@@ -138,17 +138,34 @@ export default function NewMeeting() {
   return (
     <div>
       <div className="page-header"><h2>📹 {t('pages.newMeeting.title')}</h2><p>{t('pages.newMeeting.subtitle')}</p></div>
-      <div className="meeting-options">
-        <div className="meeting-option-card" onClick={handleInstant}>
-          <div className="icon">⚡</div>
-          <h3>{t('pages.newMeeting.instant')}</h3>
-          <p>{t('pages.newMeeting.instantDesc')}</p>
+      {error && (
+        <div className="error-text" style={{ marginBottom: 14, maxWidth: 520 }}>
+          {error}
         </div>
-        <div className="meeting-option-card" onClick={() => setView('schedule')}>
+      )}
+      <div className="meeting-options">
+        <button
+          type="button"
+          className="meeting-option-card"
+          onClick={handleInstant}
+          disabled={loading}
+          style={{ width: '100%', appearance: 'none' }}
+        >
+          <div className="icon">⚡</div>
+          <h3>{loading ? t('common.loading') : t('pages.newMeeting.instant')}</h3>
+          <p>{loading ? t('pages.newMeeting.creating', { defaultValue: 'Creating instant meeting...' }) : t('pages.newMeeting.instantDesc')}</p>
+        </button>
+        <button
+          type="button"
+          className="meeting-option-card"
+          onClick={() => setView('schedule')}
+          disabled={loading}
+          style={{ width: '100%', appearance: 'none' }}
+        >
           <div className="icon">📅</div>
           <h3>{t('pages.newMeeting.scheduleMeeting')}</h3>
           <p>{t('pages.newMeeting.scheduleDesc')}</p>
-        </div>
+        </button>
       </div>
     </div>
   );

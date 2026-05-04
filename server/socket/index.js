@@ -1,7 +1,9 @@
+
 import jwt from 'jsonwebtoken';
 import { db } from '../db/index.js';
 import { users } from '../../shared/schema.js';
 import { eq } from 'drizzle-orm';
+import { getMediasoupRouter, mediasoupWorkers, transports, producers, consumers } from '../mediasoupServer.js';
 
 export function setupSocket(io) {
   // Track who is in which meeting: meetingId -> Set of {socketId, userId, name, username, avatar, userType}
@@ -12,6 +14,18 @@ export function setupSocket(io) {
     if (!token) return next(new Error('Authentication error'));
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      // Accept guest tokens (no DB lookup needed)
+      if (decoded.isGuest) {
+        socket.user = {
+          id: decoded.guestId,
+          name: decoded.displayName,
+          username: decoded.displayName,
+          avatar: null,
+          userType: 'user',
+          isGuest: true,
+        };
+        return next();
+      }
       const [user]  = await db.select({
         id: users.id,
         name: users.name,
@@ -29,6 +43,118 @@ export function setupSocket(io) {
   io.on('connection', (socket) => {
     const user = socket.user;
     let currentMeeting = null;
+
+    // ────────────── mediasoup SFU events ──────────────
+    // Store mediasoup transport/producer/consumer for this socket
+    socket.mediasoupTransports = [];
+    socket.mediasoupProducers = [];
+    socket.mediasoupConsumers = [];
+
+    // 1. Create WebRTC transport (send/recv)
+    socket.on('createTransport', async ({ meetingId, direction }, callback) => {
+      try {
+        const router = await getMediasoupRouter(meetingId);
+        const transport = await router.createWebRtcTransport({
+          listenIps: [{ ip: '0.0.0.0', announcedIp: process.env.MEDIASOUP_ANNOUNCED_IP }],
+          enableUdp: true,
+          enableTcp: true,
+          preferUdp: true,
+          enableSctp: false,
+          initialAvailableOutgoingBitrate: 1000000,
+          maxIncomingBitrate: 1500000,
+        });
+        transports.set(transport.id, { transport, meetingId, userId: user.id, direction });
+        socket.mediasoupTransports.push(transport.id);
+        callback({
+          id: transport.id,
+          iceParameters: transport.iceParameters,
+          iceCandidates: transport.iceCandidates,
+          dtlsParameters: transport.dtlsParameters,
+        });
+      } catch (err) {
+        callback({ error: err.message });
+      }
+    });
+
+    // 2. Connect transport (DTLS handshake)
+    socket.on('connectTransport', async ({ transportId, dtlsParameters }, callback) => {
+      const entry = transports.get(transportId);
+      if (!entry) return callback({ error: 'Transport not found' });
+      try {
+        await entry.transport.connect({ dtlsParameters });
+        callback({ connected: true });
+      } catch (err) {
+        callback({ error: err.message });
+      }
+    });
+
+    // 3. Produce (send audio/video)
+    socket.on('produce', async ({ transportId, kind, rtpParameters, appData }, callback) => {
+      const entry = transports.get(transportId);
+      if (!entry) return callback({ error: 'Transport not found' });
+      try {
+        const producer = await entry.transport.produce({ kind, rtpParameters, appData });
+        producers.set(producer.id, { producer, meetingId: entry.meetingId, userId: entry.userId, kind });
+        socket.mediasoupProducers.push(producer.id);
+        // Notify others in the meeting
+        socket.to(`meeting:${entry.meetingId}`).emit('new-producer', { userId: entry.userId, producerId: producer.id, kind });
+        callback({ id: producer.id });
+      } catch (err) {
+        callback({ error: err.message });
+      }
+    });
+
+    // 4. Consume (receive remote stream)
+    socket.on('consume', async ({ meetingId, producerId, rtpCapabilities }, callback) => {
+      try {
+        const router = await getMediasoupRouter(meetingId);
+        if (!router.canConsume({ producerId, rtpCapabilities })) {
+          return callback({ error: 'Cannot consume' });
+        }
+        // Find a recv transport for this user
+        const recvTransportEntry = Array.from(transports.values()).find(t => t.userId === user.id && t.meetingId === meetingId && t.direction === 'recv');
+        if (!recvTransportEntry) return callback({ error: 'No recv transport' });
+        const producerEntry = producers.get(producerId);
+        if (!producerEntry) return callback({ error: 'Producer not found' });
+        const consumer = await recvTransportEntry.transport.consume({
+          producerId,
+          rtpCapabilities,
+          paused: false,
+        });
+        consumers.set(consumer.id, { consumer, meetingId, userId: user.id, producerId });
+        socket.mediasoupConsumers.push(consumer.id);
+        consumer.on('transportclose', () => consumers.delete(consumer.id));
+        callback({
+          id: consumer.id,
+          producerId,
+          kind: consumer.kind,
+          rtpParameters: consumer.rtpParameters,
+          type: consumer.type,
+          producerPaused: consumer.producerPaused,
+        });
+      } catch (err) {
+        callback({ error: err.message });
+      }
+    });
+
+    // Clean up mediasoup resources on disconnect
+    socket.on('disconnect', () => {
+      for (const id of socket.mediasoupConsumers || []) {
+        const entry = consumers.get(id);
+        if (entry) entry.consumer.close();
+        consumers.delete(id);
+      }
+      for (const id of socket.mediasoupProducers || []) {
+        const entry = producers.get(id);
+        if (entry) entry.producer.close();
+        producers.delete(id);
+      }
+      for (const id of socket.mediasoupTransports || []) {
+        const entry = transports.get(id);
+        if (entry) entry.transport.close();
+        transports.delete(id);
+      }
+    });
 
     socket.on('join-meeting', (meetingId) => {
       currentMeeting = meetingId;
@@ -67,12 +193,27 @@ export function setupSocket(io) {
 
     const _leave = (meetingId) => {
       if (!meetingId) return;
-      socket.to(`meeting:${meetingId}`).emit('user-left', { userId: String(user.id) });
+      const room = meetingRooms.get(meetingId) || [];
+      // Only emit user-left and remove from the room list when THIS socket is
+      // still the registered socket for the user.  If the user refreshed their
+      // page, the new socket will have already replaced this socket's entry
+      // in meetingRooms.  Emitting user-left in that case would wrongly remove
+      // the still-active user from every other participant's view.
+      const entry = room.find(m => m.socketId === socket.id);
+
+      // Always leave the Socket.IO rooms so the old socket stops receiving events.
       socket.leave(`meeting:${meetingId}`);
       socket.leave(`user:${user.id}:meeting:${meetingId}`);
-      if (meetingRooms.has(meetingId)) {
-        meetingRooms.set(meetingId, meetingRooms.get(meetingId).filter(m => m.userId !== String(user.id)));
+
+      if (!entry) {
+        // This socket's entry was superseded by a newer connection for the same
+        // user (fast page-refresh).  Skip user-left — the user is still present.
+        currentMeeting = null;
+        return;
       }
+
+      socket.to(`meeting:${meetingId}`).emit('user-left', { userId: String(user.id) });
+      meetingRooms.set(meetingId, room.filter(m => m.socketId !== socket.id));
       currentMeeting = null;
     };
 

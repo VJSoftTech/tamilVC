@@ -8,7 +8,7 @@ const api = axios.create({
 });
 
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
+  const token = localStorage.getItem('token') || sessionStorage.getItem('guestToken');
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
@@ -16,10 +16,16 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (r) => r,
   (err) => {
-    if (err.response?.status === 401) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      window.location.href = '/login';
+    if (err.response?.status === 401 && !sessionStorage.getItem('guestToken')) {
+      // Don't redirect to login when the user is on a meeting or pre-join page
+      // — those pages handle unauthenticated state themselves
+      const path = window.location.pathname;
+      const onMeetingPath = path.startsWith('/meet/') || path.startsWith('/prejoin/');
+      if (!onMeetingPath) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        window.location.href = '/login';
+      }
     }
     return Promise.reject(err);
   }
@@ -38,6 +44,7 @@ export const meetingAPI = {
   updateTitle:     (id, d) => api.patch(`/meetings/${id}/title`, d),
   getInfo:         (id) => api.get(`/meetings/${id}/info`),
   join:            (id) => api.post(`/meetings/${id}/join`),
+  guestJoin:       (id, d) => api.post(`/meetings/${id}/guest-join`, d),
   leave:           (id) => api.post(`/meetings/${id}/leave`),
   end:             (id) => api.post(`/meetings/${id}/end`),
   getAll:          ()   => api.get('/meetings'),
