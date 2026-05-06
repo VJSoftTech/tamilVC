@@ -49,7 +49,137 @@ const Icons = {
       <path d="M7.5 2.5L6 4l1.5 1.5" strokeWidth={1.5} />
     </svg>
   ),
+  More: () => <Icon d="M5 12h.01M12 12h.01M19 12h.01M6 12a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm7 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm7 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0z" strokeWidth={2.5} />,
 };
+
+// ─── Video grid layout helpers ────────────────────────────────────
+/**
+ * Compute CSS-Grid template style for n participants.
+ * Layout matches Google Meet:
+ *   n=1  → full screen
+ *   n=2  → landscape: side-by-side  |  portrait: stacked
+ *   n=3  → 3 tiles in one row (landscape) | stacked (portrait)
+ *   n=4  → 2×2 grid
+ *   n=5–6 → 3×2  |  n=7-9 → 3×3  |  etc.
+ */
+function getVideoGridStyle(n, isPortrait) {
+  if (n <= 0) return {};
+  if (n === 1) {
+    return { gridTemplateColumns: '1fr', gridTemplateRows: '1fr' };
+  }
+  if (n === 2) {
+    return isPortrait
+      ? { gridTemplateColumns: '1fr',           gridTemplateRows: 'repeat(2, 1fr)' }
+      : { gridTemplateColumns: 'repeat(2, 1fr)', gridTemplateRows: '1fr'            };
+  }
+  if (n === 3) {
+    // Google Meet style: 3 tiles in a single row
+    return isPortrait
+      ? { gridTemplateColumns: '1fr',           gridTemplateRows: 'repeat(3, 1fr)' }
+      : { gridTemplateColumns: 'repeat(3, 1fr)', gridTemplateRows: '1fr'            };
+  }
+  if (n === 4) {
+    return { gridTemplateColumns: 'repeat(2, 1fr)', gridTemplateRows: 'repeat(2, 1fr)' };
+  }
+  const cols = n <= 6 ? 3 : n <= 9 ? 3 : n <= 12 ? 4 : n <= 16 ? 4 : Math.ceil(Math.sqrt(n));
+  const rows = Math.ceil(n / cols);
+  return {
+    gridTemplateColumns: `repeat(${cols}, 1fr)`,
+    gridTemplateRows:    `repeat(${rows}, 1fr)`,
+  };
+}
+
+/** Track viewport orientation so the grid switches on rotate/resize. */
+function useViewportPortrait() {
+  const [isPortrait, setIsPortrait] = useState(() => window.innerHeight > window.innerWidth);
+  useEffect(() => {
+    const update = () => setIsPortrait(window.innerHeight > window.innerWidth);
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
+  return isPortrait;
+}
+
+/**
+ * Returns a CSS transform string for the local video element so it stays
+ * upright regardless of device orientation.
+ *
+ * Strategy:
+ *  1. Front camera always mirrors (scaleX(-1)) — standard selfie UX.
+ *  2. If the browser does NOT auto-correct the stream rotation (detectable
+ *     by comparing videoWidth/videoHeight vs window orientation), we apply
+ *     a CSS rotation to compensate.  We use the actual pixel dimensions of
+ *     the live video so we only rotate when genuinely needed — avoiding
+ *     double-correction on browsers that already handle it.
+ */
+function useLocalVideoTransform(facingMode, videoRef) {
+  const [transform, setTransform] = useState(() =>
+    facingMode === 'user' ? 'scaleX(-1)' : 'none'
+  );
+
+  const recompute = useCallback(() => {
+    const el = videoRef?.current;
+    const mirror = facingMode === 'user' ? 'scaleX(-1)' : '';
+
+    // Read device orientation angle (0=portrait, 90=landscape-right,
+    // 180=portrait-upside-down, 270=landscape-left; iOS may return -90).
+    let angle = 0;
+    try {
+      angle = (typeof screen.orientation?.angle === 'number')
+        ? screen.orientation.angle
+        : (typeof window.orientation === 'number' ? window.orientation : 0);
+    } catch {}
+    // Normalise to [0, 360)
+    if (angle < 0) angle += 360;
+
+    let rotateAngle = 0;
+    if (el && el.videoWidth && el.videoHeight) {
+      const videoPortrait   = el.videoHeight > el.videoWidth;
+      const displayPortrait = window.innerHeight > window.innerWidth;
+
+      if (videoPortrait !== displayPortrait) {
+        // Stream orientation ≠ display orientation → browser did NOT auto-correct.
+        // Determine rotation direction from the current device angle.
+        if (angle === 90 || angle === 270) {
+          // Map 270 (landscape-left) → rotate -90 deg to bring it upright
+          rotateAngle = angle === 90 ? 90 : -90;
+        } else {
+          // Fallback: rotate 90° CW
+          rotateAngle = 90;
+        }
+      } else if (angle === 180) {
+        // Same orientation type but device is upside-down
+        rotateAngle = 180;
+      }
+    } else {
+      // Video dimensions not yet available; just handle the upside-down case
+      if (angle === 180) rotateAngle = 180;
+    }
+
+    const parts = [];
+    if (rotateAngle !== 0) parts.push(`rotate(${rotateAngle}deg)`);
+    if (mirror) parts.push(mirror);
+    setTransform(parts.length ? parts.join(' ') : 'none');
+  }, [facingMode]); // eslint-disable-line
+
+  useEffect(() => {
+    recompute();
+    // Recompute after a short delay on orientation change so the layout has
+    // settled and videoWidth/videoHeight reflect the new stream dimensions.
+    const onChange = () => setTimeout(recompute, 150);
+    window.addEventListener('resize', onChange);
+    try { screen.orientation.addEventListener('change', onChange); } catch {}
+    return () => {
+      window.removeEventListener('resize', onChange);
+      try { screen.orientation.removeEventListener('change', onChange); } catch {}
+    };
+  }, [recompute]);
+
+  // Also recompute when the video element reports its dimensions for the first time
+  const onLoadedMetadata = useCallback(() => recompute(), [recompute]);
+
+  return { transform, onLoadedMetadata };
+}
 
 // ─── Meeting Room Component ────────────────────────────────────────
 export default function MeetingRoom() {
@@ -95,6 +225,9 @@ export default function MeetingRoom() {
   const [facingMode,     setFacingMode]     = useState('user'); // 'user' = front, 'environment' = back
   const [isFlippingCam,  setIsFlippingCam]  = useState(false);
   const [isMobileDevice, setIsMobileDevice] = useState(false);
+  const [showMoreMenu,   setShowMoreMenu]   = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const controlsTimerRef = useRef(null);
 
   // Detect mobile once on mount
   useEffect(() => {
@@ -502,7 +635,7 @@ export default function MeetingRoom() {
     const streams = [];
     if (webrtc.isCameraOn && webrtc.localStreamRef.current) streams.push(webrtc.localStreamRef.current);
     participants.forEach(p => { if (p.camOn && p.stream) streams.push(p.stream); });
-    await recording.startRecording(streams);
+    await recording.startRecording(streams, isPortraitViewport);
     socketRef.current?.emit('signal:recording-status', { meetingId, started: true });
   };
 
@@ -544,6 +677,25 @@ export default function MeetingRoom() {
     }
   }, [isFlippingCam, webrtc.isCameraOn]);
 
+  // ── Auto-hide controls on mobile (tap screen to reveal) ─────────────
+  const resetControlsTimer = useCallback(() => {
+    setControlsVisible(true);
+    if (!isMobileDevice) return;
+    clearTimeout(controlsTimerRef.current);
+    controlsTimerRef.current = setTimeout(() => setControlsVisible(false), 4500);
+  }, [isMobileDevice]);
+
+  useEffect(() => {
+    if (isMobileDevice) resetControlsTimer();
+    return () => clearTimeout(controlsTimerRef.current);
+  }, [isMobileDevice]); // eslint-disable-line
+
+  // Keep controls visible while More menu is open
+  useEffect(() => {
+    if (showMoreMenu) clearTimeout(controlsTimerRef.current);
+    else if (isMobileDevice) resetControlsTimer();
+  }, [showMoreMenu]); // eslint-disable-line
+
   // ── Layout ─────────────────────────────────────────────────────────
   const allTiles = [
     { userId: 'local', name: (user?.name || '') + ' (You)', isLocal: true,
@@ -559,7 +711,10 @@ export default function MeetingRoom() {
   })();
 
   const isSpotlightMode = !!sharerTile || whiteboardActive;
-  const gridClass = allTiles.length === 1 ? 'count-1' : allTiles.length === 2 ? 'count-2' : allTiles.length <= 4 ? 'count-4' : 'count-many';
+  const isPortraitViewport = useViewportPortrait();
+  const videoGridStyle = getVideoGridStyle(allTiles.length, isPortraitViewport);
+  const { transform: localVideoTransform, onLoadedMetadata: onLocalVideoMetadata } =
+    useLocalVideoTransform(facingMode, localVideoRef);
 
   if (loadingJoin) return (
     <div className="waiting-room"><div className="waiting-card">
@@ -584,7 +739,11 @@ export default function MeetingRoom() {
   );
 
   return (
-    <div className="meeting-room">
+    <div
+      className="meeting-room"
+      onTouchStart={isMobileDevice ? resetControlsTimer : undefined}
+      onClick={isMobileDevice ? resetControlsTimer : undefined}
+    >
 
       {/* ── Header ── */}
       <div className="room-header">
@@ -627,14 +786,27 @@ export default function MeetingRoom() {
               </div>
               <div className="spotlight-strip">
                 {allTiles.map(tile => (
-                  <VideoTile key={tile.userId + '-strip'} tile={tile} videoRef={tile.isLocal ? localVideoRef : null} compact />
+                  <VideoTile
+                    key={tile.userId + '-strip'}
+                    tile={tile}
+                    videoRef={tile.isLocal ? localVideoRef : null}
+                    videoTransform={tile.isLocal ? localVideoTransform : undefined}
+                    onVideoMetadata={tile.isLocal ? onLocalVideoMetadata : undefined}
+                    compact
+                  />
                 ))}
               </div>
             </div>
           ) : (
-            <div className={`video-grid ${gridClass}`}>
+            <div className="video-grid" style={videoGridStyle}>
               {allTiles.map(tile => (
-                <VideoTile key={tile.userId} tile={tile} videoRef={tile.isLocal ? localVideoRef : null} />
+                <VideoTile
+                  key={tile.userId}
+                  tile={tile}
+                  videoRef={tile.isLocal ? localVideoRef : null}
+                  videoTransform={tile.isLocal ? localVideoTransform : undefined}
+                  onVideoMetadata={tile.isLocal ? onLocalVideoMetadata : undefined}
+                />
               ))}
             </div>
           )}
@@ -722,7 +894,7 @@ export default function MeetingRoom() {
       </div>
 
       {/* ── Controls Bar ── */}
-      <div className="controls-bar">
+      <div className={`controls-bar${isMobileDevice && !controlsVisible ? ' ctrl-bar-hidden' : ''}`}>
         <div className="controls-group">
           {/* Mic */}
           <CtrlBtn
@@ -739,9 +911,10 @@ export default function MeetingRoom() {
             label={webrtc.isCameraOn ? t('pages.meetingRoom.stopVideo') : t('pages.meetingRoom.startVideo')}
           />
 
-          {/* ── Flip Camera: mobile only, camera must be on ── */}
+          {/* ── Flip Camera: in More menu on mobile ── */}
           {isMobileDevice && webrtc.isCameraOn && (
             <CtrlBtn
+              className="ctrl-secondary"
               active={!isFlippingCam}
               offStyle="blue"
               onClick={handleFlipCamera}
@@ -751,15 +924,13 @@ export default function MeetingRoom() {
                   ? <span style={{ display: 'inline-block', fontSize: 18, animation: 'spin 0.5s linear infinite' }}>↻</span>
                   : <Icons.CamFlip />
               }
-              label={facingMode === 'user'
-                ? (t('pages.meetingRoom.backCamera') || 'Back Cam')
-                : (t('pages.meetingRoom.frontCamera') || 'Front Cam')
-              }
+              label={isFlippingCam ? 'Switch…' : '↺ Switch'}
             />
           )}
 
           {/* Screen share */}
           <CtrlBtn
+            className="ctrl-secondary"
             active={!webrtc.isScreenSharing} offStyle="blue"
             onClick={
               webrtc.isScreenSharing
@@ -801,6 +972,7 @@ export default function MeetingRoom() {
           {/* Whiteboard (host only) */}
           {isHost && (
             <CtrlBtn
+              className="ctrl-secondary"
               active={!whiteboardActive} offStyle="blue"
               onClick={handleToggleWhiteboard}
               icon={whiteboardActive ? <Icons.WhiteboardOff /> : <Icons.Whiteboard />}
@@ -809,6 +981,7 @@ export default function MeetingRoom() {
           )}
           {/* Effects */}
           <CtrlBtn
+            className="ctrl-secondary"
             active={!webrtc.isEffectActive} offStyle="blue"
             onClick={() => setShowEffectsPanel(true)}
             icon={<Icons.Effects />}
@@ -826,6 +999,16 @@ export default function MeetingRoom() {
             }
             label={t('common.chat')}
           />
+          {/* More: mobile only — secondary controls in a bottom sheet */}
+          {isMobileDevice && (
+            <CtrlBtn
+              active={showMoreMenu}
+              offStyle="blue"
+              onClick={() => setShowMoreMenu(true)}
+              icon={<Icons.More />}
+              label="More"
+            />
+          )}
         </div>
 
         <div className="controls-divider" />
@@ -838,10 +1021,143 @@ export default function MeetingRoom() {
         />
       </div>
 
+      {/* ── More menu bottom sheet (mobile) ── */}
+      {showMoreMenu && (
+        <div
+          className="more-menu-backdrop"
+          onClick={() => { setShowMoreMenu(false); resetControlsTimer(); }}
+        >
+          <div className="more-menu-sheet" onClick={e => e.stopPropagation()}>
+            <div className="more-menu-handle" />
+            <div className="more-menu-title">More options</div>
+            <div className="more-menu-grid">
+              {/* Screen share */}
+              <CtrlBtn
+                active={!webrtc.isScreenSharing} offStyle="blue"
+                onClick={async () => {
+                  if (webrtc.isScreenSharing) {
+                    await webrtc.stopScreenShare();
+                    socketRef.current?.emit('signal:screen-share', { meetingId, active: false });
+                    setScreenSharer(null);
+                  } else {
+                    try {
+                      await webrtc.startScreenShare(handleScreenShareEnded);
+                      socketRef.current?.emit('signal:screen-share', { meetingId, active: true });
+                      setScreenSharer('local');
+                    } catch (err) {
+                      if (err.name !== 'NotAllowedError') console.error('Screen share error:', err);
+                    }
+                  }
+                  setShowMoreMenu(false); resetControlsTimer();
+                }}
+                icon={webrtc.isScreenSharing ? <Icons.ScreenOff /> : <Icons.ScreenOn />}
+                label={webrtc.isScreenSharing ? t('pages.meetingRoom.stopShare') : t('pages.meetingRoom.shareScreen')}
+              />
+              {/* Whiteboard (host only) */}
+              {isHost && (
+                <CtrlBtn
+                  active={!whiteboardActive} offStyle="blue"
+                  onClick={() => { handleToggleWhiteboard(); setShowMoreMenu(false); resetControlsTimer(); }}
+                  icon={whiteboardActive ? <Icons.WhiteboardOff /> : <Icons.Whiteboard />}
+                  label={whiteboardActive ? t('pages.meetingRoom.closeBoard') : t('pages.meetingRoom.whiteboard')}
+                />
+              )}
+              {/* Effects */}
+              <CtrlBtn
+                active={!webrtc.isEffectActive} offStyle="blue"
+                onClick={() => { setShowEffectsPanel(true); setShowMoreMenu(false); resetControlsTimer(); }}
+                icon={<Icons.Effects />}
+                label={t('pages.meetingRoom.effects')}
+              />
+              {/* Participants */}
+              <CtrlBtn
+                active={true}
+                onClick={() => { setSidebarTab('participants'); setShowSidebar(true); setShowMoreMenu(false); resetControlsTimer(); }}
+                icon={<Icons.People />}
+                label={t('common.people')}
+              />
+              {/* Flip Camera */}
+              {webrtc.isCameraOn && (
+                <CtrlBtn
+                  active={!isFlippingCam}
+                  onClick={() => { handleFlipCamera(); setShowMoreMenu(false); resetControlsTimer(); }}
+                  disabled={isFlippingCam}
+                  icon={isFlippingCam
+                    ? <span style={{ fontSize: 18, animation: 'spin 0.5s linear infinite', display: 'inline-block' }}>↻</span>
+                    : <Icons.CamFlip />}
+                  label={isFlippingCam ? 'Switch…' : '↺ Switch'}
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <style>{`
         @keyframes blink     { 0%,100%{opacity:1} 50%{opacity:0.3} }
         @keyframes pulse-ring{ 0%{transform:scale(1);opacity:.8} 100%{transform:scale(1.4);opacity:0} }
         @keyframes spin      { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+
+        /* ── Mobile controls ────────────────────────────────────── */
+        .controls-bar { transition: transform 0.35s cubic-bezier(0.4,0,0.2,1); }
+        .ctrl-bar-hidden { transform: translateY(115%); }
+
+        @media (max-width: 768px) {
+          /* Hide secondary controls — they live in the More sheet */
+          .ctrl-secondary { display: none !important; }
+
+          /* Glass bottom bar */
+          .controls-bar {
+            background: rgba(12,14,26,0.78);
+            backdrop-filter: blur(16px) saturate(1.7);
+            -webkit-backdrop-filter: blur(16px) saturate(1.7);
+            border-top: 1px solid rgba(255,255,255,0.07);
+            padding: 8px 6px 14px;
+          }
+          /* Larger tap targets on mobile */
+          .controls-bar button {
+            min-width: 52px;
+            min-height: 52px;
+            border-radius: 14px;
+          }
+        }
+
+        /* ── More menu bottom sheet ────────────────────────────── */
+        .more-menu-backdrop {
+          position: fixed; inset: 0; z-index: 3000;
+          background: rgba(0,0,0,0.55);
+          backdrop-filter: blur(3px);
+          display: flex; align-items: flex-end; justify-content: center;
+          animation: mm-fade 0.2s ease;
+        }
+        .more-menu-sheet {
+          width: 100%; max-width: 520px;
+          background: var(--surface, #16192a);
+          border: 1px solid rgba(255,255,255,0.1);
+          border-bottom: none;
+          border-radius: 22px 22px 0 0;
+          padding: 12px 20px calc(env(safe-area-inset-bottom, 0px) + 28px);
+          animation: mm-slide 0.28s cubic-bezier(0.4,0,0.2,1);
+        }
+        .more-menu-handle {
+          width: 36px; height: 4px;
+          background: rgba(255,255,255,0.18);
+          border-radius: 2px; margin: 0 auto 14px;
+        }
+        .more-menu-title {
+          font-size: 11px; font-weight: 700;
+          color: var(--text-muted, #8b99bd);
+          text-align: center; letter-spacing: 1px;
+          text-transform: uppercase;
+          margin-bottom: 16px;
+        }
+        .more-menu-grid {
+          display: flex; flex-wrap: wrap;
+          gap: 10px; justify-content: center;
+        }
+        .more-menu-grid > button { flex: 0 0 auto; min-width: 72px; }
+        @keyframes mm-fade  { from{opacity:0}      to{opacity:1} }
+        @keyframes mm-slide { from{transform:translateY(100%)} to{transform:translateY(0)} }
       `}</style>
 
       <BackgroundPanel
@@ -904,7 +1220,7 @@ export default function MeetingRoom() {
 }
 
 // ─── Control Button ────────────────────────────────────────────────
-function CtrlBtn({ icon, label, onClick, active, offStyle, pulse, disabled }) {
+function CtrlBtn({ icon, label, onClick, active, offStyle, pulse, disabled, className }) {
   const colors = {
     red:    { bg: 'rgba(239,68,68,0.15)',  border: 'rgba(239,68,68,0.4)',  color: '#f87171' },
     blue:   { bg: 'rgba(99,102,241,0.2)',  border: 'rgba(99,102,241,0.5)', color: '#a5b4fc' },
@@ -916,6 +1232,7 @@ function CtrlBtn({ icon, label, onClick, active, offStyle, pulse, disabled }) {
       onClick={onClick}
       title={label}
       disabled={disabled}
+      className={className || ''}
       style={{
         display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5,
         background: c ? c.bg : 'var(--surface2)',
@@ -998,7 +1315,7 @@ function ScreenTile({ tile }) {
 }
 
 // ─── Video Tile ────────────────────────────────────────────────────
-function VideoTile({ tile, videoRef, compact }) {
+function VideoTile({ tile, videoRef, compact, videoTransform, onVideoMetadata }) {
   const { t } = useTranslation();
   const ownRef    = useRef(null);
   const activeRef = videoRef || ownRef;
@@ -1009,10 +1326,13 @@ function VideoTile({ tile, videoRef, compact }) {
       {/* Video is always mounted so srcObject assignment is always valid.
           Visibility is controlled by opacity/visibility, not display:none. */}
       <video ref={activeRef} autoPlay playsInline muted={tile.isLocal}
+        onLoadedMetadata={onVideoMetadata}
         style={{
           width: '100%', height: '100%', objectFit: 'cover',
           opacity: tile.camOn && tile.stream ? 1 : 0,
           position: tile.camOn && tile.stream ? 'relative' : 'absolute',
+          transform: videoTransform || 'none',
+          transition: 'transform 0.3s ease',
         }}
       />
       {(!tile.camOn || !tile.stream) && (

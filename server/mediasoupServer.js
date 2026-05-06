@@ -50,4 +50,4 @@ export async function getMediasoupRouter(meetingId) {
   return meetingRouters.get(meetingId);
 }
 
-export { mediasoupWorkers, transports, producers, consumers };
+export { mediasoupWorkers, meetingRouters, transports, producers, consumers };

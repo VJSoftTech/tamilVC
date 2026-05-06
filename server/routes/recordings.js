@@ -40,8 +40,8 @@ router.post('/', authMiddleware, upload.single('recording'), async (req, res) =>
     if (!meeting_id || !req.file) return res.status(422).json({ message: 'meeting_id and file required' });
 
     const [meeting] = await db.select().from(meetings)
-      .where(and(eq(meetings.meetingId, meeting_id), eq(meetings.hostId, req.user.id)));
-    if (!meeting) return res.status(403).json({ message: 'Not authorized' });
+      .where(eq(meetings.meetingId, meeting_id));
+    if (!meeting) return res.status(404).json({ message: 'Meeting not found' });
 
     const [rec] = await db.insert(recordings).values({
       meetingId: meeting_id, hostId: req.user.id,

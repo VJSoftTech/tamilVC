@@ -30,34 +30,116 @@ export const useRecording = (meetingId, messages = {}) => {
 
   // ── Draw a single video into a canvas cell, preserving aspect ratio ──
   // letterboxes / pillarboxes with a dark background so nothing stretches.
-  const drawContained = (ctx, video, cellX, cellY, cellW, cellH) => {
+  /**
+   * Draw one video frame into a canvas cell, correcting for stream pixel
+   * orientation.
+   *
+   * The fundamental problem on mobile:
+   *   - The camera hardware always captures pixels in its native orientation
+   *     (usually portrait: tall pixel buffer).
+   *   - When the user holds the device in landscape, the OS may or may not
+   *     rotate the pixel buffer before handing it to the MediaStream.
+   *   - iOS Safari: NEVER rotates — always delivers portrait pixels regardless
+   *     of device orientation.
+   *   - Android Chrome: Usually rotates automatically, but not always.
+   *
+   * We detect a mismatch by comparing videoWidth/videoHeight against the
+   * canvas cell dimensions and apply a compensating CSS rotation.
+   *
+   * Browser orientation angle convention (screen.orientation.angle):
+   *   0   = portrait upright
+   *   90  = landscape, device rotated CCW (home button on right side of screen)
+   *         → the "top" of the scene is on the RIGHT edge of the pixel buffer
+   *         → rotate pixel buffer CCW (-90°) to bring top back to top
+   *   180 = portrait upside-down
+   *   270 = landscape, device rotated CW (home button on left side of screen)
+   *         → the "top" of the scene is on the LEFT edge of the pixel buffer
+   *         → rotate pixel buffer CW (+90°) to bring top back to top
+   *
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {HTMLVideoElement} video
+   * @param {number} cellX
+   * @param {number} cellY
+   * @param {number} cellW
+   * @param {number} cellH
+   * @param {number} orientationAngle  Normalised screen.orientation.angle (0/90/180/270)
+   * @param {boolean} canvasIsPortrait  Whether the recording canvas is taller than wide
+   */
+  const drawOriented = (ctx, video, cellX, cellY, cellW, cellH, orientationAngle, canvasIsPortrait) => {
     const vw = video.videoWidth  || cellW;
     const vh = video.videoHeight || cellH;
-    const scale = Math.min(cellW / vw, cellH / vh);
-    const dw    = vw * scale;
-    const dh    = vh * scale;
-    const dx    = cellX + (cellW - dw) / 2;
-    const dy    = cellY + (cellH - dh) / 2;
 
-    // Dark cell background
+    const videoIsPortrait = vh > vw;
+    const cellIsPortrait  = cellH > cellW;
+    let rotation = 0; // degrees
+
+    if (videoIsPortrait !== cellIsPortrait) {
+      // Stream pixels are portrait but canvas cell is landscape (or vice versa).
+      // The browser did NOT auto-rotate the stream — we must do it manually.
+      //
+      // angle=90  → device landscape CCW → "top" is at RIGHT of pixel buffer → rotate CCW (-90°)
+      // angle=270 → device landscape CW  → "top" is at LEFT of pixel buffer  → rotate CW  (+90°)
+      // angle=0/180 → portrait mismatch (rare) → best-effort 90° rotation
+      if (orientationAngle === 270) {
+        rotation = 90;   // landscape-right (home button left): rotate CW
+      } else if (orientationAngle === 90) {
+        rotation = -90;  // landscape-left (home button right): rotate CCW
+      } else if (orientationAngle === 180) {
+        rotation = 180;  // upside-down portrait in landscape cell
+      } else {
+        rotation = 90;   // angle=0 fallback
+      }
+    } else if (!videoIsPortrait && !canvasIsPortrait && orientationAngle === 270) {
+      // Android landscape-right edge case: both stream AND canvas are landscape,
+      // but pixel data is 180° flipped relative to what the user sees.
+      rotation = 180;
+    }
+
+    ctx.save();
     ctx.fillStyle = '#111118';
     ctx.fillRect(cellX, cellY, cellW, cellH);
 
-    try { ctx.drawImage(video, dx, dy, dw, dh); } catch {}
+    const cx = cellX + cellW / 2;
+    const cy = cellY + cellH / 2;
+    ctx.translate(cx, cy);
+
+    if (rotation !== 0) {
+      ctx.rotate(rotation * Math.PI / 180);
+      // After ±90° rotation the video's effective w/h are swapped relative to
+      // the cell; fit into the swapped space.
+      const absRot = Math.abs(rotation);
+      const needsSwap = absRot === 90 || absRot === 270;
+      const fitW = needsSwap ? cellH : cellW;
+      const fitH = needsSwap ? cellW : cellH;
+      const scale = Math.min(fitW / vw, fitH / vh);
+      const dw = vw * scale;
+      const dh = vh * scale;
+      try { ctx.drawImage(video, -dw / 2, -dh / 2, dw, dh); } catch {}
+    } else {
+      const scale = Math.min(cellW / vw, cellH / vh);
+      const dw = vw * scale;
+      const dh = vh * scale;
+      try { ctx.drawImage(video, -dw / 2, -dh / 2, dw, dh); } catch {}
+    }
+
+    ctx.restore();
   };
 
   // ── Compute tile positions for n participants ─────────────────────
-  // Keeps a sensible aspect ratio per tile and centres a single tile.
   const computeLayout = (n, canvasW, canvasH) => {
     if (n === 0) return [];
 
     if (n === 1) {
-      // Centred, leaving some padding
-      const pad = 0;
-      return [{ x: pad, y: pad, w: canvasW - pad * 2, h: canvasH - pad * 2 }];
+      return [{ x: 0, y: 0, w: canvasW, h: canvasH }];
     }
 
     if (n === 2) {
+      if (canvasH > canvasW) {
+        return [
+          { x: 0, y: 0,           w: canvasW, h: canvasH / 2 },
+          { x: 0, y: canvasH / 2, w: canvasW, h: canvasH / 2 },
+        ];
+      }
       return [
         { x: 0,         y: 0, w: canvasW / 2, h: canvasH },
         { x: canvasW/2, y: 0, w: canvasW / 2, h: canvasH },
@@ -65,10 +147,19 @@ export const useRecording = (meetingId, messages = {}) => {
     }
 
     if (n === 3) {
+      if (canvasH > canvasW) {
+        const h3 = canvasH / 3;
+        return [
+          { x: 0, y: 0,      w: canvasW, h: h3 },
+          { x: 0, y: h3,     w: canvasW, h: h3 },
+          { x: 0, y: h3 * 2, w: canvasW, h: h3 },
+        ];
+      }
+      const w3 = canvasW / 3;
       return [
-        { x: 0,         y: 0,         w: canvasW / 2, h: canvasH / 2 },
-        { x: canvasW/2, y: 0,         w: canvasW / 2, h: canvasH / 2 },
-        { x: canvasW/4, y: canvasH/2, w: canvasW / 2, h: canvasH / 2 },
+        { x: 0,      y: 0, w: w3, h: canvasH },
+        { x: w3,     y: 0, w: w3, h: canvasH },
+        { x: w3 * 2, y: 0, w: w3, h: canvasH },
       ];
     }
 
@@ -82,12 +173,11 @@ export const useRecording = (meetingId, messages = {}) => {
       ];
     }
 
-    // 5+ : compute optimal grid (minimise wasted space)
     const cols = Math.ceil(Math.sqrt(n));
     const rows = Math.ceil(n / cols);
     const cw   = canvasW / cols;
     const ch   = canvasH / rows;
-    const last = n % cols; // how many tiles in the final (possibly short) row
+    const last = n % cols;
     const positions = [];
 
     for (let i = 0; i < n; i++) {
@@ -96,7 +186,6 @@ export const useRecording = (meetingId, messages = {}) => {
       const isLastRow = row === rows - 1 && last > 0;
 
       if (isLastRow) {
-        // Centre the remaining tiles in the last row
         const totalW  = last * cw;
         const startX  = (canvasW - totalW) / 2;
         positions.push({ x: startX + col * cw, y: row * ch, w: cw, h: ch });
@@ -108,10 +197,31 @@ export const useRecording = (meetingId, messages = {}) => {
     return positions;
   };
 
-  const buildCompositeStream = useCallback((streams) => {
-    // Use 16:9 canvas — works well for landscape and portrait sources alike
-    // because drawContained() letterboxes portrait content.
-    const W = 1280, H = 720;
+  const buildCompositeStream = useCallback((streams, isPortrait = false) => {
+    const W = isPortrait ? 720 : 1280;
+    const H = isPortrait ? 1280 : 720;
+
+    // Snapshot the device orientation angle at recording start.
+    // IMPORTANT: We must read this BEFORE starting the draw loop because
+    // the user may rotate the device mid-recording; we compensate based on
+    // the orientation at the moment they pressed Record.
+    let orientationAngle = 0;
+    try {
+      // Prefer screen.orientation.angle (standard, consistent across browsers).
+      // Fall back to window.orientation (deprecated, iOS Safari legacy).
+      // window.orientation uses the OPPOSITE sign convention on some iOS versions,
+      // so we normalise to [0, 360) after reading.
+      let raw = 0;
+      if (typeof screen?.orientation?.angle === 'number') {
+        raw = screen.orientation.angle;
+      } else if (typeof window.orientation === 'number') {
+        // window.orientation: 0, 90, -90, 180
+        // -90 on iOS = landscape-left = same as screen.orientation.angle 90
+        raw = window.orientation;
+      }
+      orientationAngle = ((raw % 360) + 360) % 360; // normalise to [0, 360)
+    } catch {}
+
     const canvas = document.createElement('canvas');
     canvas.width  = W;
     canvas.height = H;
@@ -119,13 +229,11 @@ export const useRecording = (meetingId, messages = {}) => {
     const audioCtx = new AudioContext();
     const dest     = audioCtx.createMediaStreamDestination();
 
-    // Create hidden video elements for each stream
     const videos = streams.map(s => {
       const v    = document.createElement('video');
       v.srcObject = s;
       v.autoplay  = true;
       v.muted     = true;
-      // Force portrait-correct rendering: let the browser figure out natural size
       v.playsInline = true;
       v.play().catch(() => {});
 
@@ -138,7 +246,6 @@ export const useRecording = (meetingId, messages = {}) => {
     const n = videos.length;
 
     const draw = () => {
-      // Background
       ctx.fillStyle = '#1a1a2e';
       ctx.fillRect(0, 0, W, H);
 
@@ -147,7 +254,7 @@ export const useRecording = (meetingId, messages = {}) => {
       videos.forEach((v, i) => {
         if (i < positions.length) {
           const p = positions[i];
-          drawContained(ctx, v, p.x, p.y, p.w, p.h);
+          drawOriented(ctx, v, p.x, p.y, p.w, p.h, orientationAngle, isPortrait);
         }
       });
 
@@ -183,8 +290,6 @@ export const useRecording = (meetingId, messages = {}) => {
       animFrameRef.current = requestAnimationFrame(draw);
     };
 
-    // Wait one frame so video elements have a chance to load metadata
-    // (videoWidth/videoHeight become available), then start the loop
     requestAnimationFrame(() => {
       requestAnimationFrame(draw);
     });
@@ -195,12 +300,12 @@ export const useRecording = (meetingId, messages = {}) => {
     ]);
   }, []);
 
-  const startRecording = useCallback(async (streams) => {
+  const startRecording = useCallback(async (streams, isPortrait = false) => {
     if (!streams.length) {
       alert(messages.noActiveStreams || 'No active camera streams to record.');
       return;
     }
-    const composite = buildCompositeStream(streams);
+    const composite = buildCompositeStream(streams, isPortrait);
     const mimeType  = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
       ? 'video/webm;codecs=vp9,opus'
       : MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')
@@ -230,21 +335,24 @@ export const useRecording = (meetingId, messages = {}) => {
       const dur  = Math.floor((Date.now() - startTimeRef.current) / 1000);
       setIsRecording(false);
       setIsSaving(true);
+
+      const url = URL.createObjectURL(blob);
+      const a   = document.createElement('a');
+      a.href     = url;
+      a.download = `recording-${meetingId}-${Date.now()}.webm`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+
       try {
         const fd = new FormData();
-        fd.append('recording', blob, 'recording.webm');
         fd.append('meeting_id', meetingId);
         fd.append('duration', dur);
+        fd.append('recording', blob, 'recording.webm');
         const res = await recordingAPI.save(fd);
         setIsSaving(false);
         resolve(res.data);
       } catch {
         setIsSaving(false);
-        const url = URL.createObjectURL(blob);
-        const a   = document.createElement('a');
-        a.href     = url;
-        a.download = `recording-${meetingId}-${Date.now()}.webm`;
-        a.click();
         resolve(null);
       }
     };

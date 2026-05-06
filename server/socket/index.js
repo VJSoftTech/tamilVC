@@ -4,6 +4,7 @@ import { db } from '../db/index.js';
 import { users } from '../../shared/schema.js';
 import { eq } from 'drizzle-orm';
 import { getMediasoupRouter, mediasoupWorkers, transports, producers, consumers } from '../mediasoupServer.js';
+import { registerRecordingHandlers } from '../recording/recordingSocket.js';
 
 export function setupSocket(io) {
   // Track who is in which meeting: meetingId -> Set of {socketId, userId, name, username, avatar, userType}
@@ -250,6 +251,13 @@ export function setupSocket(io) {
         avatar: user.avatar,
         userType: user.userType,
       }));
+
+    // ── Server-side composite recording ─────────────────────────────
+    registerRecordingHandlers(
+      io,
+      socket,
+      `${process.env.BASE_URL || 'http://localhost:5000'}/api/recordings/files`,
+    );
 
     // ── Whiteboard ───────────────────────────────────────────────────
     // Relay draw strokes/commands to everyone else in the room.
