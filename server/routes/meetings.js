@@ -104,6 +104,7 @@ router.get('/stats/dashboard', authMiddleware, async (req, res) => {
 // POST /api/meetings/instant
 router.post('/instant', authMiddleware, async (req, res) => {
   try {
+    const frontendUrl = process.env.FRONTEND_URL || `${req.protocol}://${req.get('host')}`;
     const meetingId = await generateMeetingId();
     const [meeting] = await db.insert(meetings).values({
       meetingId, title: req.body.title || 'Instant Meeting',
@@ -111,7 +112,7 @@ router.post('/instant', authMiddleware, async (req, res) => {
       hostId: req.user.id, type: 'instant', status: 'waiting',
     }).returning();
     const normalized = { ...meeting, meeting_id: meeting.meetingId };
-    const link = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/meet/${meetingId}`;
+    const link = `${frontendUrl}/meet/${meetingId}`;
     res.status(201).json({ message: 'Meeting created', meeting: { ...normalized, host: req.user }, meeting_link: link });
   } catch (err) { console.error(err); res.status(500).json({ message: 'Server error' }); }
 });
@@ -123,13 +124,14 @@ router.post('/schedule', authMiddleware, async (req, res) => {
     if (!title || !scheduled_at) return res.status(422).json({ message: 'Title and scheduled_at required' });
     if (new Date(scheduled_at) <= new Date()) return res.status(422).json({ message: 'Scheduled time must be in the future' });
 
+    const frontendUrl = process.env.FRONTEND_URL || `${req.protocol}://${req.get('host')}`;
     const meetingId = await generateMeetingId();
     const [meeting] = await db.insert(meetings).values({
       meetingId, title, subTitle: req.body.subTitle || null, hostId: req.user.id, type: 'scheduled',
       description: description || null, scheduledAt: new Date(scheduled_at), status: 'waiting',
     }).returning();
     const normalized = { ...meeting, meeting_id: meeting.meetingId };
-    const link = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/meet/${meetingId}`;
+    const link = `${frontendUrl}/meet/${meetingId}`;
     res.status(201).json({ message: 'Meeting scheduled', meeting: { ...normalized, host: req.user }, meeting_link: link });
   } catch (err) { console.error(err); res.status(500).json({ message: 'Server error' }); }
 });
