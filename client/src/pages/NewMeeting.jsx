@@ -16,7 +16,8 @@ export default function NewMeeting() {
   const [meetingData, setMeetingData] = useState(null);
   const [copied,      setCopied]      = useState(false);
   const [instantTitle,setInstantTitle]= useState('Instant Meeting');
-  const [schedForm,   setSchedForm]   = useState({ title: '', scheduled_at: '', description: '' });
+  const [instantSubTitle,setInstantSubTitle]= useState('');
+  const [schedForm,   setSchedForm]   = useState({ title: '', subTitle: '', scheduled_at: '', description: '' });
 
   const handleInstant = async () => {
     setLoading(true); setError('');
@@ -32,13 +33,14 @@ export default function NewMeeting() {
   const handleJoinReady = async () => {
     if (!meetingData?.meeting?.meeting_id) return;
     const nextTitle = instantTitle.trim() || t('pages.newMeeting.instantDefaultTitle');
+    const nextSubTitle = instantSubTitle.trim() || null;
     setLoading(true);
     setError('');
     try {
-      await meetingAPI.updateTitle(meetingData.meeting.meeting_id, { title: nextTitle });
+      await meetingAPI.updateTitle(meetingData.meeting.meeting_id, { title: nextTitle, subTitle: nextSubTitle });
       setMeetingData((prev) => ({
         ...prev,
-        meeting: { ...prev.meeting, title: nextTitle },
+        meeting: { ...prev.meeting, title: nextTitle, subTitle: nextSubTitle },
       }));
       navigate(`/prejoin/${meetingData.meeting.meeting_id}`);
     } catch (e) {
@@ -81,6 +83,14 @@ export default function NewMeeting() {
             />
           </div>
           <div className="form-group">
+            <label>Sub Title</label>
+            <input
+              value={instantSubTitle}
+              onChange={(e) => setInstantSubTitle(e.target.value)}
+              placeholder="Optional sub title"
+            />
+          </div>
+          <div className="form-group">
             <label>{t('pages.newMeeting.displayName')}</label>
             <input value={user?.name || ''} disabled />
           </div>
@@ -110,6 +120,11 @@ export default function NewMeeting() {
               <label>{t('pages.newMeeting.meetingTitle')}</label>
               <input value={schedForm.title} onChange={e => setSchedForm(p => ({ ...p, title: e.target.value }))}
                 placeholder={t('pages.newMeeting.schedulePlaceholder')} required />
+            </div>
+            <div className="form-group">
+              <label>Sub Title</label>
+              <input value={schedForm.subTitle} onChange={e => setSchedForm(p => ({ ...p, subTitle: e.target.value }))}
+                placeholder="Optional sub title" />
             </div>
             <div className="form-group">
               <label>{t('pages.newMeeting.dateTime')}</label>

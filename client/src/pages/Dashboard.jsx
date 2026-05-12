@@ -79,7 +79,10 @@ export default function Dashboard() {
               <tbody>
                 {stats.upcoming.map(m => (
                   <tr key={m.id}>
-                    <td style={{ fontWeight: 500 }}>{m.title}</td>
+                    <td style={{ fontWeight: 500 }}>
+                      <div>{m.title}</div>
+                      {m.subTitle && <div style={{ fontSize: 12, color: 'var(--text-muted, #888)', marginTop: 2 }}>{m.subTitle}</div>}
+                    </td>
                     <td><code>{m.meeting_id}</code></td>
                     <td style={{ color: 'var(--text-muted)' }}>{fmt(m.scheduledAt || m.scheduled_at)}</td>
                     <td>

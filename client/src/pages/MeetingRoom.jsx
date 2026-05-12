@@ -748,7 +748,12 @@ export default function MeetingRoom() {
       {/* ── Header ── */}
       <div className="room-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ fontWeight: 700, fontSize: 14 }}>{meetingInfo?.title || t('pages.newMeeting.meetingFallbackTitle')}</span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <span style={{ fontWeight: 700, fontSize: 14 }}>{meetingInfo?.title || t('pages.newMeeting.meetingFallbackTitle')}</span>
+            {meetingInfo?.subTitle && (
+              <span style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.3 }}>{meetingInfo.subTitle}</span>
+            )}
+          </div>
           <span style={{ fontSize: 11, color: 'var(--text-muted)', background: 'var(--surface2)', padding: '2px 8px', borderRadius: 20 }}>{meetingId}</span>
           {recording.isRecording && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)', padding: '3px 10px', borderRadius: 20 }}>

@@ -20,7 +20,7 @@ async function generateMeetingId() {
 router.get('/:meetingId/info', async (req, res) => {
   try {
     const [row] = await db.select({
-      id: meetings.id, meetingId: meetings.meetingId, title: meetings.title,
+      id: meetings.id, meetingId: meetings.meetingId, title: meetings.title, subTitle: meetings.subTitle,
       type: meetings.type, description: meetings.description, scheduledAt: meetings.scheduledAt,
       startedAt: meetings.startedAt, endedAt: meetings.endedAt, status: meetings.status, createdAt: meetings.createdAt,
       hostId: meetings.hostId,
@@ -46,7 +46,7 @@ router.post('/:meetingId/guest-join', async (req, res) => {
     if (!displayName) return res.status(422).json({ message: 'Display name is required' });
 
     const [row] = await db.select({
-      id: meetings.id, meetingId: meetings.meetingId, title: meetings.title,
+      id: meetings.id, meetingId: meetings.meetingId, title: meetings.title, subTitle: meetings.subTitle,
       type: meetings.type, status: meetings.status, startedAt: meetings.startedAt,
       createdAt: meetings.createdAt, hostId: meetings.hostId,
       hostName: users.name, hostUsername: users.username,
@@ -107,6 +107,7 @@ router.post('/instant', authMiddleware, async (req, res) => {
     const meetingId = await generateMeetingId();
     const [meeting] = await db.insert(meetings).values({
       meetingId, title: req.body.title || 'Instant Meeting',
+      subTitle: req.body.subTitle || null,
       hostId: req.user.id, type: 'instant', status: 'waiting',
     }).returning();
     const normalized = { ...meeting, meeting_id: meeting.meetingId };
@@ -124,7 +125,7 @@ router.post('/schedule', authMiddleware, async (req, res) => {
 
     const meetingId = await generateMeetingId();
     const [meeting] = await db.insert(meetings).values({
-      meetingId, title, hostId: req.user.id, type: 'scheduled',
+      meetingId, title, subTitle: req.body.subTitle || null, hostId: req.user.id, type: 'scheduled',
       description: description || null, scheduledAt: new Date(scheduled_at), status: 'waiting',
     }).returning();
     const normalized = { ...meeting, meeting_id: meeting.meetingId };
@@ -167,7 +168,7 @@ router.post('/:meetingId/join', guestOrAuthMiddleware, async (req, res) => {
     }
 
     const [fresh] = await db.select({
-      id: meetings.id, meetingId: meetings.meetingId, title: meetings.title,
+      id: meetings.id, meetingId: meetings.meetingId, title: meetings.title, subTitle: meetings.subTitle,
       type: meetings.type, status: meetings.status, startedAt: meetings.startedAt, createdAt: meetings.createdAt,
       hostId: meetings.hostId, hostName: users.name, hostUsername: users.username,
     }).from(meetings).innerJoin(users, eq(users.id, meetings.hostId)).where(eq(meetings.meetingId, meetingId));
@@ -201,14 +202,19 @@ router.patch('/:meetingId/title', authMiddleware, async (req, res) => {
     const { meetingId } = req.params;
     const title = String(req.body.title || '').trim();
     if (!title) return res.status(422).json({ message: 'Title is required' });
+    const subTitle = req.body.subTitle !== undefined ? (String(req.body.subTitle).trim() || null) : undefined;
+
+    const setValues = { title, updatedAt: new Date() };
+    if (subTitle !== undefined) setValues.subTitle = subTitle;
 
     const [updated] = await db.update(meetings)
-      .set({ title, updatedAt: new Date() })
+      .set(setValues)
       .where(and(eq(meetings.meetingId, meetingId), eq(meetings.hostId, req.user.id)))
       .returning({
         id: meetings.id,
         meetingId: meetings.meetingId,
         title: meetings.title,
+        subTitle: meetings.subTitle,
       });
 
     if (!updated) return res.status(403).json({ message: 'Not authorized' });
@@ -252,7 +258,7 @@ router.get('/', authMiddleware, async (req, res) => {
   try {
     const uid  = req.user.id;
     const rows = await db.select({
-      id: meetings.id, meetingId: meetings.meetingId, title: meetings.title,
+      id: meetings.id, meetingId: meetings.meetingId, title: meetings.title, subTitle: meetings.subTitle,
       type: meetings.type, status: meetings.status, scheduledAt: meetings.scheduledAt,
       startedAt: meetings.startedAt, endedAt: meetings.endedAt, createdAt: meetings.createdAt,
       hostId: meetings.hostId, hostName: users.name, hostUsername: users.username,

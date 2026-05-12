@@ -18,6 +18,7 @@ import {
 const __dirname  = path.dirname(fileURLToPath(import.meta.url));
 const uploadDir  = process.env.UPLOAD_DIR || './recordings';
 const recsDir    = path.resolve(process.cwd(), uploadDir);
+console.log('Recordings directory:', recsDir);
 if (!fs.existsSync(recsDir)) fs.mkdirSync(recsDir, { recursive: true });
 
 const storage = multer.diskStorage({
@@ -36,6 +37,7 @@ async function getAuthorizedRecording(id, userId) {
 
 router.post('/', authMiddleware, upload.single('recording'), async (req, res) => {
   try {
+    console.log('Recording save attempt:', { meeting_id: req.body.meeting_id, user: req.user.id, file: req.file?.filename });
     const { meeting_id, duration } = req.body;
     if (!meeting_id || !req.file) return res.status(422).json({ message: 'meeting_id and file required' });
 
@@ -46,29 +48,35 @@ router.post('/', authMiddleware, upload.single('recording'), async (req, res) =>
     const [rec] = await db.insert(recordings).values({
       meetingId: meeting_id, hostId: req.user.id,
       title: `${meeting.title} - Recording`,
+      subTitle: meeting.subTitle || null,
+      bgMusicName: req.body.bg_music_name || null,
+      bgMusicVolume: req.body.bg_music_volume ? parseInt(req.body.bg_music_volume) : null,
+      videoVolume: req.body.video_volume ? parseInt(req.body.video_volume) : null,
       filePath: req.file.filename,
       fileSize: req.file.size,
       duration: duration ? parseInt(duration) : null,
     }).returning();
+    console.log('Recording saved:', rec);
     scheduleSubtitleGeneration(recsDir, req.file.filename);
     res.status(201).json({ message: 'Saved', recording: rec });
-  } catch (err) { console.error(err); res.status(500).json({ message: 'Server error' }); }
+  } catch (err) { console.error('Recording save error:', err); res.status(500).json({ message: 'Server error' }); }
 });
 
 router.get('/', authMiddleware, async (req, res) => {
   try {
+    console.log('Fetching recordings for user:', req.user.id);
     const rows = await db.select({
-      id: recordings.id, meetingId: recordings.meetingId, title: recordings.title,
+      id: recordings.id, meetingId: recordings.meetingId, title: recordings.title, subTitle: recordings.subTitle,
       filePath: recordings.filePath, fileSize: recordings.fileSize,
       duration: recordings.duration, recordedAt: recordings.recordedAt,
-      meetingTitle: meetings.title,
+      meetingTitle: meetings.title, meetingSubTitle: meetings.subTitle,
       hostName: users.name, hostUsername: users.username,
     }).from(recordings)
       .innerJoin(meetings, eq(meetings.meetingId, recordings.meetingId))
       .innerJoin(users, eq(users.id, recordings.hostId))
       .where(eq(recordings.hostId, req.user.id)).orderBy(desc(recordings.recordedAt));
 
-    const base = `${req.protocol}://${req.get('host')}`;
+    console.log('Found recordings:', rows.length);
     res.json(rows.map(r => ({
       ...(function () {
         const current = readSubtitleStatus(recsDir, r.filePath);
@@ -80,17 +88,17 @@ router.get('/', authMiddleware, async (req, res) => {
           subtitle_status: subtitle.status,
           subtitle_message: subtitle.message,
           subtitle_updated_at: subtitle.updatedAt,
-          subtitle_url: subtitle.hasVtt ? `${base}/api/recordings/${r.id}/subtitles.vtt` : null,
-          subtitle_srt_url: subtitle.hasSrt ? `${base}/api/recordings/${r.id}/subtitles.srt` : null,
+          subtitle_url: subtitle.hasVtt ? `/api/recordings/${r.id}/subtitles.vtt` : null,
+          subtitle_srt_url: subtitle.hasSrt ? `/api/recordings/${r.id}/subtitles.srt` : null,
           embedded_subtitles_download_url: subtitle.status === 'ready'
-            ? `${base}/api/recordings/${r.id}/download-with-subtitles`
+            ? `/api/recordings/${r.id}/download-with-subtitles`
             : null,
         };
       })(),
       ...r,
-      meeting:      { meeting_id: r.meetingId, title: r.meetingTitle },
+      meeting:      { meeting_id: r.meetingId, title: r.meetingTitle, subTitle: r.meetingSubTitle },
       host:         { name: r.hostName, username: r.hostUsername },
-      download_url: `${base}/api/recordings/${r.id}/download`,
+      download_url: `/api/recordings/${r.id}/download`,
     })));
   } catch (err) { console.error(err); res.status(500).json({ message: 'Server error' }); }
 });

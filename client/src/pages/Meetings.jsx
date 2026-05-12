@@ -47,7 +47,10 @@ export default function Meetings() {
               <tbody>
                 {meetings.map(m => (
                   <tr key={m.id}>
-                    <td style={{ fontWeight: 500 }}>{m.title}</td>
+                    <td style={{ fontWeight: 500 }}>
+                      <div>{m.title}</div>
+                      {m.subTitle && <div style={{ fontSize: 12, color: 'var(--text-muted, #888)', marginTop: 2 }}>{m.subTitle}</div>}
+                    </td>
                     <td><code>{m.meeting_id || m.meetingId}</code></td>
                     <td style={{ color: 'var(--text-muted)' }}>{m.host?.name || '—'}</td>
                     <td style={{ color: 'var(--text-muted)' }}>{fmt(m.created_at || m.createdAt)}</td>

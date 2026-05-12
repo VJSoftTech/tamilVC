@@ -15,6 +15,25 @@ const INTRO_OUTRO_OPTIONS = [
   { value: 'both',  label: 'Both — Intro & Outro (5 sec each)' },
 ];
 
+// Default background music library.
+// Place audio files under public/music/ matching the urls below,
+// or swap the urls for any publicly hosted royalty-free tracks.
+const DEFAULT_MUSIC_LIBRARY = [
+  { id: 'soft-1',          genre: 'Soft',         name: 'Gentle Breeze',     url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',  duration: 120 },
+  { id: 'soft-2',          genre: 'Soft',         name: 'Morning Light',     url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3',  duration: 95  },
+  { id: 'romantic-1',      genre: 'Romantic',     name: 'Sweet Moments',     url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3',  duration: 110 },
+  { id: 'romantic-2',      genre: 'Romantic',     name: 'Tender Touch',      url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3',  duration: 130 },
+  { id: 'corporate-1',     genre: 'Corporate',    name: 'Business Flow',     url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3',  duration: 90  },
+  { id: 'corporate-2',     genre: 'Corporate',    name: 'Professional Rise', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3',  duration: 105 },
+  { id: 'cinematic-1',     genre: 'Cinematic',    name: 'Epic Journey',      url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-7.mp3',  duration: 150 },
+  { id: 'cinematic-2',     genre: 'Cinematic',    name: 'Grand Horizon',     url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3',  duration: 140 },
+  { id: 'happy-1',         genre: 'Happy',        name: 'Sunny Days',        url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-9.mp3',  duration: 88  },
+  { id: 'happy-2',         genre: 'Happy',        name: 'Joyful Bounce',     url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-10.mp3', duration: 92  },
+  { id: 'emotional-1',     genre: 'Emotional',    name: 'Deep Reflection',   url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-11.mp3', duration: 118 },
+  { id: 'motivational-1',  genre: 'Motivational', name: 'Rise Up',           url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-12.mp3', duration: 125 },
+];
+const MUSIC_GENRES = ['All', 'Soft', 'Romantic', 'Corporate', 'Cinematic', 'Happy', 'Emotional', 'Motivational'];
+
 const getOverlayStyle = (position) => {
   const base = {
     position: 'absolute',
@@ -65,7 +84,12 @@ const drawStaticImageSegment = (ctx, img, width, height, durationSec) =>
     requestAnimationFrame(tick);
   });
 
-const renderEditedBlob = async ({ sourceUrl, watermarkDataUrl, position, introDataUrl, introOutroPosition }) => {
+const renderEditedBlob = async ({
+  sourceUrl, watermarkDataUrl, position, introDataUrl, introOutroPosition,
+  bgMusicUrl = null, bgMusicVolume = 0.5, videoGainValue = 1,
+  bgMusicStartInVideo = 0, bgMusicTrimStart = 0, bgMusicTrimEnd = null,
+  bgMusicFadeIn = false, bgMusicFadeOut = false, bgMusicLoop = true,
+}) => {
   const hasIntro = !!introDataUrl && (introOutroPosition === 'front' || introOutroPosition === 'both');
   const hasOutro = !!introDataUrl && (introOutroPosition === 'back' || introOutroPosition === 'both');
 
@@ -99,12 +123,31 @@ const renderEditedBlob = async ({ sourceUrl, watermarkDataUrl, position, introDa
 
   const audioCtx = new AudioContext();
   const dest = audioCtx.createMediaStreamDestination();
+
+  // Video audio with independent volume control
+  const videoGain = audioCtx.createGain();
+  videoGain.gain.value = videoGainValue;
   try {
     const sourceNode = audioCtx.createMediaElementSource(video);
-    sourceNode.connect(dest);
-    sourceNode.connect(audioCtx.destination);
+    sourceNode.connect(videoGain);
+    videoGain.connect(dest);
+    videoGain.connect(audioCtx.destination);
   } catch {
     // Ignore if media node cannot be attached; output will contain only video.
+  }
+
+  // Load background music if provided
+  let bgBuffer = null;
+  if (bgMusicUrl) {
+    try {
+      const resp = await fetch(bgMusicUrl);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status} from music source`);
+      const arrayBuf = await resp.arrayBuffer();
+      bgBuffer = await audioCtx.decodeAudioData(arrayBuf);
+    } catch (e) {
+      audioCtx.close().catch(() => {});
+      throw new Error(`Background music failed to load: ${e.message}`);
+    }
   }
 
   const mixedStream = new MediaStream([
@@ -134,7 +177,35 @@ const renderEditedBlob = async ({ sourceUrl, watermarkDataUrl, position, introDa
 
   recorder.start(1000);
 
-  // Phase 1: Intro image segment
+  // Schedule background music
+  let bgSource = null;
+  if (bgBuffer) {
+    const musicGain = audioCtx.createGain();
+    bgSource = audioCtx.createBufferSource();
+    bgSource.buffer = bgBuffer;
+    bgSource.loop = bgMusicLoop;
+
+    const startAt = audioCtx.currentTime + Math.max(0, bgMusicStartInVideo);
+    const trimOffset = Math.max(0, bgMusicTrimStart);
+    const trimDuration = bgMusicTrimEnd != null
+      ? Math.max(0.1, bgMusicTrimEnd - trimOffset)
+      : undefined;
+
+    musicGain.gain.setValueAtTime(bgMusicFadeIn ? 0 : bgMusicVolume, audioCtx.currentTime);
+    bgSource.connect(musicGain);
+    musicGain.connect(dest);
+    bgSource.start(startAt, trimOffset, trimDuration);
+
+    if (bgMusicFadeIn) {
+      const fadeEnd = startAt + Math.min(2, (video.duration || 10) * 0.15);
+      musicGain.gain.linearRampToValueAtTime(bgMusicVolume, fadeEnd);
+    }
+    if (bgMusicFadeOut && (video.duration || 0) > 2) {
+      const fadeStart = audioCtx.currentTime + (video.duration - Math.min(2, video.duration * 0.15));
+      musicGain.gain.setValueAtTime(bgMusicVolume, Math.max(startAt + 0.01, fadeStart));
+      musicGain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + video.duration);
+    }
+  }
   if (hasIntro) await drawStaticImageSegment(ctx, overlayImg, width, height, 5);
 
   // Phase 2: Main video with optional watermark
@@ -176,12 +247,14 @@ const renderEditedBlob = async ({ sourceUrl, watermarkDataUrl, position, introDa
   if (hasOutro) await drawStaticImageSegment(ctx, overlayImg, width, height, 5);
 
   recorder.stop();
+  if (bgSource) { try { bgSource.stop(); } catch {} }
   const blob = await blobPromise;
+  const videoDuration = video.duration;
   mixedStream.getTracks().forEach((t) => t.stop());
   video.src = '';
 
   const extraSecs = (hasIntro ? 5 : 0) + (hasOutro ? 5 : 0);
-  return { blob, duration: Math.max(1, Math.round((video.duration || 0) + extraSecs)) };
+  return { blob, duration: Math.max(1, Math.round((videoDuration || 0) + extraSecs)) };
 };
 
 export default function Recordings() {
@@ -198,6 +271,23 @@ export default function Recordings() {
   const [editVolume, setEditVolume] = useState(1);
   const [editIntroOutro, setEditIntroOutro] = useState('');
   const [editIntroOutroPosition, setEditIntroOutroPosition] = useState('front');
+  // Background music state
+  const [editTab, setEditTab] = useState('overlay');
+  const [musicSourceTab, setMusicSourceTab] = useState('upload');
+  const [bgMusicFile, setBgMusicFile] = useState(null);
+  const [bgMusicFileUrl, setBgMusicFileUrl] = useState(null);
+  const [bgMusicFileName, setBgMusicFileName] = useState('');
+  const [bgMusicFileDuration, setBgMusicFileDuration] = useState(null);
+  const [selectedLibraryTrack, setSelectedLibraryTrack] = useState(null);
+  const [bgMusicVolume, setBgMusicVolume] = useState(0.5);
+  const [bgMusicStartInVideo, setBgMusicStartInVideo] = useState(0);
+  const [bgMusicTrimStart, setBgMusicTrimStart] = useState(0);
+  const [bgMusicTrimEnd, setBgMusicTrimEnd] = useState('');
+  const [bgMusicFadeIn, setBgMusicFadeIn] = useState(false);
+  const [bgMusicFadeOut, setBgMusicFadeOut] = useState(false);
+  const [bgMusicLoop, setBgMusicLoop] = useState(true);
+  const [musicLibraryGenre, setMusicLibraryGenre] = useState('All');
+  const [previewingTrackId, setPreviewingTrackId] = useState(null);
   const [page, setPage] = useState(1);
 
   const PAGE_SIZE = 8;
@@ -205,6 +295,8 @@ export default function Recordings() {
   const videoPreviewRef = useRef(null);
   const watermarkInputRef = useRef(null);
   const introOutroInputRef = useRef(null);
+  const bgMusicInputRef = useRef(null);
+  const previewAudioRef = useRef(null);
 
   const loadRecordings = async () => {
     setLoading(true);
@@ -244,15 +336,42 @@ export default function Recordings() {
     setEditSaving(false);
     setEditPlaying(false);
     setEditVolume(1);
+    setEditTab('overlay');
+    setMusicSourceTab('upload');
+    setBgMusicFile(null);
+    setBgMusicFileUrl(null);
+    setBgMusicFileName('');
+    setBgMusicFileDuration(null);
+    setSelectedLibraryTrack(null);
+    setBgMusicVolume(0.5);
+    setBgMusicStartInVideo(0);
+    setBgMusicTrimStart(0);
+    setBgMusicTrimEnd('');
+    setBgMusicFadeIn(false);
+    setBgMusicFadeOut(false);
+    setBgMusicLoop(true);
+    setMusicLibraryGenre('All');
+    setPreviewingTrackId(null);
   };
 
   const closeEditModal = () => {
     if (editSaving) return;
+    if (previewAudioRef.current) {
+      previewAudioRef.current.pause();
+      previewAudioRef.current.src = '';
+    }
+    if (bgMusicFileUrl) URL.revokeObjectURL(bgMusicFileUrl);
     setEditingRec(null);
     setEditWatermark('');
     setEditPosition('bottom-right');
     setEditIntroOutro('');
     setEditIntroOutroPosition('front');
+    setBgMusicFile(null);
+    setBgMusicFileUrl(null);
+    setBgMusicFileName('');
+    setBgMusicFileDuration(null);
+    setSelectedLibraryTrack(null);
+    setPreviewingTrackId(null);
   };
 
   const onUploadWatermark = async (e) => {
@@ -285,6 +404,55 @@ export default function Recordings() {
     }
   };
 
+  const onUploadBgMusic = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const ok = /\.(mp3|wav|m4a)$/i.test(file.name) ||
+      ['audio/mpeg', 'audio/wav', 'audio/mp4', 'audio/x-m4a', 'audio/aac'].includes(file.type);
+    if (!ok) { alert('Please upload an MP3, WAV, or M4A file.'); return; }
+    try {
+      if (bgMusicFileUrl) URL.revokeObjectURL(bgMusicFileUrl);
+      const url = URL.createObjectURL(file);
+      const dur = await new Promise((res) => {
+        const a = new Audio(url);
+        a.onloadedmetadata = () => res(a.duration);
+        a.onerror = () => res(null);
+      });
+      setBgMusicFile(file);
+      setBgMusicFileUrl(url);
+      setBgMusicFileName(file.name);
+      setBgMusicFileDuration(dur);
+      setSelectedLibraryTrack(null);
+    } catch {
+      alert('Failed to load audio file. Please try another file.');
+    }
+  };
+
+  const toggleTrackPreview = (track) => {
+    const audio = previewAudioRef.current;
+    if (!audio) return;
+
+    // Clicking the same track — stop it
+    if (previewingTrackId === track.id) {
+      audio.pause();
+      audio.src = '';
+      setPreviewingTrackId(null);
+      return;
+    }
+
+    // Switch to a new track
+    audio.pause();
+    audio.src = track.url;
+    audio.volume = 0.7;
+    setPreviewingTrackId(track.id);
+    audio.play().catch((err) => {
+      // AbortError is expected on rapid track-switching; ignore it
+      if (err.name !== 'AbortError') {
+        setPreviewingTrackId(null);
+      }
+    });
+  };
+
   const togglePreviewPlay = async () => {
     const v = videoPreviewRef.current;
     if (!v) return;
@@ -304,13 +472,29 @@ export default function Recordings() {
   };
 
   const handleSaveEdit = async () => {
-    if (!editingRec || (!editWatermark && !editIntroOutro)) {
-      alert('Upload a watermark or intro/outro image before saving.');
+    const activeMusicUrl = bgMusicFileUrl || selectedLibraryTrack?.url || null;
+    if (!editingRec || (!editWatermark && !editIntroOutro && !activeMusicUrl)) {
+      alert('Upload a watermark, intro/outro image, or background music before saving.');
       return;
     }
 
     setEditSaving(true);
+    let tempMusicBlobUrl = null;
     try {
+      // Pre-fetch external (library) music through the server proxy and convert to
+      // a same-origin blob URL before calling renderEditedBlob.
+      // This sidesteps the browser CORS restriction that blocks fetch() +
+      // Web Audio API decodeAudioData() on cross-origin audio files.
+      let renderMusicUrl = activeMusicUrl;
+      if (activeMusicUrl && !activeMusicUrl.startsWith('blob:') && !activeMusicUrl.startsWith('data:')) {
+        const proxyUrl = `/api/proxy-audio?url=${encodeURIComponent(activeMusicUrl)}`;
+        const proxyResp = await fetch(proxyUrl);
+        if (!proxyResp.ok) throw new Error(`Failed to load background music (HTTP ${proxyResp.status}). Make sure the server is running.`);
+        const audioBuf = await proxyResp.arrayBuffer();
+        const audioBlob = new Blob([audioBuf], { type: proxyResp.headers.get('content-type') || 'audio/mpeg' });
+        tempMusicBlobUrl = URL.createObjectURL(audioBlob);
+        renderMusicUrl = tempMusicBlobUrl;
+      }
       const sourceUrl = urlWithToken(editingRec.download_url);
       const { blob, duration } = await renderEditedBlob({
         sourceUrl,
@@ -318,12 +502,27 @@ export default function Recordings() {
         position: editPosition,
         introDataUrl: editIntroOutro || null,
         introOutroPosition: editIntroOutroPosition,
+        bgMusicUrl: renderMusicUrl,
+        bgMusicVolume,
+        videoGainValue: editVolume,
+        bgMusicStartInVideo: Math.max(0, bgMusicStartInVideo),
+        bgMusicTrimStart: Math.max(0, bgMusicTrimStart),
+        bgMusicTrimEnd: bgMusicTrimEnd !== '' && bgMusicTrimEnd !== null ? parseFloat(bgMusicTrimEnd) : null,
+        bgMusicFadeIn,
+        bgMusicFadeOut,
+        bgMusicLoop,
       });
 
       const fd = new FormData();
       fd.append('recording', blob, `recording_${editingRec.meetingId || editingRec.meeting_id}_${Date.now()}.webm`);
       fd.append('meeting_id', editingRec.meetingId || editingRec.meeting_id);
       fd.append('duration', duration || editingRec.duration || 0);
+      const bgMusicName = bgMusicFileName || selectedLibraryTrack?.name || '';
+      if (bgMusicName) {
+        fd.append('bg_music_name', bgMusicName);
+        fd.append('bg_music_volume', Math.round(bgMusicVolume * 100));
+        fd.append('video_volume', Math.round(editVolume * 100));
+      }
 
       await recordingAPI.save(fd);
       await recordingAPI.delete(editingRec.id);
@@ -331,8 +530,9 @@ export default function Recordings() {
       closeEditModal();
     } catch (err) {
       console.error(err);
-      alert('Failed to edit recording.');
+      alert(err?.message || 'Failed to edit recording.');
     } finally {
+      if (tempMusicBlobUrl) URL.revokeObjectURL(tempMusicBlobUrl);
       setEditSaving(false);
     }
   };
@@ -340,7 +540,8 @@ export default function Recordings() {
   const fmtDur = (s) => {
     if (!s) return '-';
     const m = Math.floor(s / 60);
-    return `${m}:${(s % 60).toString().padStart(2, '0')}`;
+    const sec = Math.floor(s % 60);
+    return `${m}:${sec.toString().padStart(2, '0')}`;
   };
   const fmtSize = (b) => {
     if (!b) return '-';
@@ -424,6 +625,9 @@ export default function Recordings() {
               {/* ── Info ─────────────────────────────────────── */}
               <div className="rec-info">
                 <div className="rec-title">{r.title}</div>
+                {r.subTitle && (
+                  <div style={{ fontSize: 12, color: 'var(--text-muted, #888)', marginTop: 2, marginBottom: 4 }}>{r.subTitle}</div>
+                )}
                 <div className="rec-meta">
                   <span className="rec-meta-label">Meeting ID:</span>
                   <code className="rec-meeting-id">{r.meetingId || r.meeting_id}</code>
@@ -456,7 +660,7 @@ export default function Recordings() {
                   </svg>
                   View
                 </button>
-                {/* <button
+                <button
                   className="rec-btn rec-btn-edit"
                   onClick={() => openEditModal(r)}
                 >
@@ -465,7 +669,7 @@ export default function Recordings() {
                     <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
                   </svg>
                   Edit
-                </button> */}
+                </button>
                 <a
                   href={urlWithToken(r.download_url)}
                   download
@@ -566,6 +770,9 @@ export default function Recordings() {
             }}>
               <div>
                 <div style={{ fontWeight: 600, fontSize: 15 }}>{viewingRec.title}</div>
+                {viewingRec.subTitle && (
+                  <div style={{ fontSize: 12, color: 'var(--text-muted, #888)', marginTop: 1 }}>{viewingRec.subTitle}</div>
+                )}
                 <div style={{ fontSize: 12, color: 'var(--text-muted, #888)', marginTop: 2 }}>
                   {fmt(viewingRec.recordedAt || viewingRec.recorded_at)}
                   {viewingRec.duration ? ` · ${fmtDur(viewingRec.duration)}` : ''}
@@ -589,70 +796,29 @@ export default function Recordings() {
       )}
 
       {editingRec && (
-        <div
-          onClick={closeEditModal}
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(4,8,18,0.75)',
-            backdropFilter: 'blur(2px)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1200,
-            padding: 20,
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              width: '100%',
-              maxWidth: 1100,
-              background: 'linear-gradient(180deg, rgba(20,27,42,0.98), rgba(14,19,33,0.98))',
-              border: '1px solid rgba(255,255,255,0.1)',
-              borderRadius: 18,
-              boxShadow: '0 24px 80px rgba(0,0,0,0.45)',
-              overflow: 'hidden',
-            }}
-          >
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              padding: '16px 20px',
-              borderBottom: '1px solid rgba(255,255,255,0.12)',
-              color: '#eef2ff',
-            }}>
+        <div className="em-overlay" onClick={closeEditModal}>
+          <div className="em-dialog" onClick={(e) => e.stopPropagation()}>
+
+            {/* ── Header ── */}
+            <div className="em-header">
               <div>
-                <div style={{ fontSize: 17, fontWeight: 700 }}>Edit Recording</div>
-                <div style={{ fontSize: 12, opacity: 0.7, marginTop: 2 }}>{editingRec.title}</div>
+                <div className="em-header-title">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 7, verticalAlign: 'middle', opacity: 0.7 }}><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                  Edit Recording
+                </div>
+                <div className="em-header-sub">{editingRec.title}{editingRec.subTitle ? ` · ${editingRec.subTitle}` : ''}</div>
               </div>
-              <button
-                onClick={closeEditModal}
-                disabled={editSaving}
-                style={{
-                  border: 'none',
-                  background: 'rgba(255,255,255,0.1)',
-                  color: '#fff',
-                  borderRadius: 10,
-                  width: 34,
-                  height: 34,
-                  cursor: editSaving ? 'not-allowed' : 'pointer',
-                }}
-              >
-                X
+              <button className="em-close-btn" onClick={closeEditModal} disabled={editSaving} aria-label="Close">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
               </button>
             </div>
 
-            <div className="recording-edit-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.8fr) minmax(0,1fr)' }}>
-              <div style={{ padding: 18, borderRight: '1px solid rgba(255,255,255,0.1)' }}>
-                <div style={{
-                  background: '#000',
-                  borderRadius: 14,
-                  overflow: 'hidden',
-                  position: 'relative',
-                  minHeight: 260,
-                }}>
+            {/* ── Body ── */}
+            <div className="em-body recording-edit-grid">
+
+              {/* Left — video preview */}
+              <div className="em-left">
+                <div className="em-video-wrap">
                   <video
                     ref={videoPreviewRef}
                     src={urlWithToken(editingRec.download_url)}
@@ -660,156 +826,275 @@ export default function Recordings() {
                     onPlay={() => setEditPlaying(true)}
                     onPause={() => setEditPlaying(false)}
                     onLoadedMetadata={(e) => { e.currentTarget.volume = editVolume; }}
-                    style={{ width: '100%', display: 'block', maxHeight: '62vh' }}
+                    className="em-video"
                   />
                   {editWatermark && (
                     <img src={editWatermark} alt="watermark preview" style={getOverlayStyle(editPosition)} />
                   )}
                 </div>
 
-                <div style={{ display: 'flex', gap: 10, marginTop: 14, flexWrap: 'wrap' }}>
-                  <button className="btn btn-outline" onClick={togglePreviewPlay}>
-                    {editPlaying ? 'Pause' : 'Play'}
-                  </button>
-                  <button className="btn btn-outline" onClick={() => setPreviewVolume(editVolume + 0.1)}>Vol +</button>
-                  <button className="btn btn-outline" onClick={() => setPreviewVolume(editVolume - 0.1)}>Vol -</button>
-                  <span style={{ color: '#b6c1da', fontSize: 12, alignSelf: 'center' }}>
-                    Volume: {Math.round(editVolume * 100)}%
-                  </span>
+                <div className="em-controls-card">
+                  <div className="em-controls-top">
+                    <button className="em-play-btn" onClick={togglePreviewPlay}>
+                      {editPlaying ? (
+                        <><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg> Pause</>
+                      ) : (
+                        <><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg> Play</>
+                      )}
+                    </button>
+                    <span className="em-controls-hint">Preview</span>
+                  </div>
+                  <div className="em-vol-row">
+                    <svg className="em-vol-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+                    <span className="em-vol-label">Volume</span>
+                    <input type="range" min="0" max="1" step="0.05" value={editVolume}
+                      onChange={(e) => setPreviewVolume(parseFloat(e.target.value))}
+                      className="em-range em-range-purple" />
+                    <span className="em-vol-pct">{Math.round(editVolume * 100)}%</span>
+                  </div>
                 </div>
               </div>
 
-              <div style={{ padding: 18, color: '#dbe5ff' }}>
-                <div style={{ fontSize: 12, opacity: 0.8, textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 8 }}>
-                  Watermark Image
-                </div>
-                <button
-                  className="btn btn-outline"
-                  onClick={() => watermarkInputRef.current?.click()}
-                  style={{ marginBottom: 10 }}
-                >
-                  Upload Image
-                </button>
-                <input
-                  ref={watermarkInputRef}
-                  type="file"
-                  accept="image/*"
-                  onChange={onUploadWatermark}
-                  style={{ display: 'none' }}
-                />
+              {/* Right — controls */}
+              <div className="em-right">
 
-                {editWatermark ? (
-                  <div style={{
-                    background: 'rgba(255,255,255,0.05)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: 12,
-                    padding: 10,
-                    marginBottom: 18,
-                  }}>
-                    <img src={editWatermark} alt="selected watermark" style={{ width: '100%', maxHeight: 140, objectFit: 'contain' }} />
-                  </div>
-                ) : (
-                  <div style={{ fontSize: 12, color: '#95a3c9', marginBottom: 18 }}>
-                    No watermark selected yet.
-                  </div>
-                )}
-
-                <div style={{ fontSize: 12, opacity: 0.8, textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 8 }}>
-                  Position
-                </div>
-                <div style={{ display: 'grid', gap: 8, marginBottom: 18 }}>
-                  {POSITION_OPTIONS.map((opt) => (
-                    <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
-                      <input
-                        type="radio"
-                        name="wm-position"
-                        value={opt.value}
-                        checked={editPosition === opt.value}
-                        onChange={(e) => setEditPosition(e.target.value)}
-                      />
-                      {opt.label}
-                    </label>
+                {/* Tab bar */}
+                <div className="em-tabs" role="tablist">
+                  {[{ key: 'overlay', icon: '🖼', label: 'Overlay' }, { key: 'music', icon: '🎵', label: 'Music' }].map(tab => (
+                    <button key={tab.key} role="tab" aria-selected={editTab === tab.key}
+                      onClick={() => setEditTab(tab.key)}
+                      className={`em-tab${editTab === tab.key ? ' em-tab-active' : ''}`}>
+                      {tab.icon} {tab.label}
+                    </button>
                   ))}
                 </div>
 
-                <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', marginTop: 4, paddingTop: 16 }}>
-                  <div style={{ fontSize: 12, opacity: 0.8, textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 8 }}>
-                    Intro / Outro Image
-                  </div>
-                  <button
-                    className="btn btn-outline"
-                    onClick={() => introOutroInputRef.current?.click()}
-                    style={{ marginBottom: 10 }}
-                    disabled={editSaving}
-                  >
-                    Upload Image
-                  </button>
-                  <input
-                    ref={introOutroInputRef}
-                    type="file"
-                    accept="image/*"
-                    onChange={onUploadIntroOutro}
-                    style={{ display: 'none' }}
-                  />
+                {/* ── OVERLAY TAB ── */}
+                {editTab === 'overlay' && (
+                  <div className="em-tab-content">
 
-                  {editIntroOutro ? (
-                    <div style={{
-                      background: 'rgba(255,255,255,0.05)',
-                      border: '1px solid rgba(255,255,255,0.1)',
-                      borderRadius: 12,
-                      padding: 10,
-                      marginBottom: 12,
-                    }}>
-                      <img src={editIntroOutro} alt="intro/outro preview" style={{ width: '100%', maxHeight: 120, objectFit: 'contain' }} />
-                      <button
-                        onClick={() => setEditIntroOutro('')}
-                        style={{ marginTop: 6, background: 'none', border: 'none', color: '#f87171', fontSize: 11, cursor: 'pointer', padding: 0 }}
-                      >
-                        Remove
+                    <div className="em-section">
+                      <div className="em-section-label">Watermark Image</div>
+                      <button className="em-upload-btn" onClick={() => watermarkInputRef.current?.click()} disabled={editSaving}>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                        Choose Image
                       </button>
+                      <input ref={watermarkInputRef} type="file" accept="image/*" onChange={onUploadWatermark} style={{ display: 'none' }} />
+                      {editWatermark ? (
+                        <div className="em-preview-card">
+                          <img src={editWatermark} alt="watermark" className="em-preview-img" />
+                          <button className="em-remove-btn" onClick={() => setEditWatermark('')}>✕ Remove</button>
+                        </div>
+                      ) : (
+                        <p className="em-empty-hint">No watermark selected yet.</p>
+                      )}
                     </div>
-                  ) : (
-                    <div style={{ fontSize: 12, color: '#95a3c9', marginBottom: 12 }}>
-                      No intro/outro image selected.
-                    </div>
-                  )}
 
-                  {editIntroOutro && (
-                    <>
-                      <div style={{ fontSize: 12, opacity: 0.8, textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 8 }}>
-                        Display Position
-                      </div>
-                      <div style={{ display: 'grid', gap: 8, marginBottom: 8 }}>
-                        {INTRO_OUTRO_OPTIONS.map((opt) => (
-                          <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
-                            <input
-                              type="radio"
-                              name="io-position"
-                              value={opt.value}
-                              checked={editIntroOutroPosition === opt.value}
-                              onChange={(e) => setEditIntroOutroPosition(e.target.value)}
-                            />
+                    <div className="em-section">
+                      <div className="em-section-label">Position</div>
+                      <div className="em-radio-group">
+                        {POSITION_OPTIONS.map((opt) => (
+                          <label key={opt.value} className="em-radio-label">
+                            <input type="radio" name="wm-position" value={opt.value} checked={editPosition === opt.value}
+                              onChange={(e) => setEditPosition(e.target.value)} />
                             {opt.label}
                           </label>
                         ))}
                       </div>
-                      <div style={{ fontSize: 11, color: '#7080a0', marginBottom: 4 }}>
-                        Each segment plays for 5 seconds.
-                      </div>
-                    </>
-                  )}
-                </div>
+                    </div>
 
-                <div style={{ display: 'flex', gap: 10, marginTop: 20, flexWrap: 'wrap' }}>
-                  <button className="btn btn-primary" onClick={handleSaveEdit} disabled={editSaving}>
-                    {editSaving ? 'Saving...' : 'Save'}
-                  </button>
-                  <button className="btn btn-outline" onClick={closeEditModal} disabled={editSaving}>
-                    Discard
-                  </button>
-                </div>
+                    <hr className="em-divider" />
+
+                    <div className="em-section">
+                      <div className="em-section-label">Intro / Outro Image</div>
+                      <button className="em-upload-btn" onClick={() => introOutroInputRef.current?.click()} disabled={editSaving}>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                        Choose Image
+                      </button>
+                      <input ref={introOutroInputRef} type="file" accept="image/*" onChange={onUploadIntroOutro} style={{ display: 'none' }} />
+                      {editIntroOutro ? (
+                        <div className="em-preview-card">
+                          <img src={editIntroOutro} alt="intro/outro" className="em-preview-img" />
+                          <button className="em-remove-btn" onClick={() => setEditIntroOutro('')}>✕ Remove</button>
+                        </div>
+                      ) : (
+                        <p className="em-empty-hint">No intro/outro image selected.</p>
+                      )}
+                      {editIntroOutro && (
+                        <>
+                          <div className="em-section-label" style={{ marginTop: 14 }}>Display At</div>
+                          <div className="em-radio-group">
+                            {INTRO_OUTRO_OPTIONS.map((opt) => (
+                              <label key={opt.value} className="em-radio-label">
+                                <input type="radio" name="io-position" value={opt.value} checked={editIntroOutroPosition === opt.value}
+                                  onChange={(e) => setEditIntroOutroPosition(e.target.value)} />
+                                {opt.label}
+                              </label>
+                            ))}
+                          </div>
+                          <p className="em-hint-text">Each segment plays for 5 seconds.</p>
+                        </>
+                      )}
+                    </div>
+
+                  </div>
+                )}
+
+                {/* ── MUSIC TAB ── */}
+                {editTab === 'music' && (
+                  <div className="em-tab-content">
+
+                    {/* Volume mix */}
+                    <div className="em-vol-card">
+                      <div className="em-section-label">Volume Mix</div>
+                      <div className="em-vol-row" style={{ marginBottom: 10 }}>
+                        <span className="em-vol-label">🎬 Video</span>
+                        <input type="range" min="0" max="1" step="0.05" value={editVolume}
+                          onChange={(e) => setPreviewVolume(parseFloat(e.target.value))}
+                          className="em-range em-range-purple" />
+                        <span className="em-vol-pct">{Math.round(editVolume * 100)}%</span>
+                      </div>
+                      <div className="em-vol-row">
+                        <span className="em-vol-label">🎵 Music</span>
+                        <input type="range" min="0" max="1" step="0.05" value={bgMusicVolume}
+                          onChange={(e) => setBgMusicVolume(parseFloat(e.target.value))}
+                          className="em-range em-range-amber" />
+                        <span className="em-vol-pct">{Math.round(bgMusicVolume * 100)}%</span>
+                      </div>
+                    </div>
+
+                    {/* Upload / Library sub-tabs */}
+                    <div className="em-subtabs">
+                      {[{ key: 'upload', label: '📤 Upload' }, { key: 'library', label: '🎵 Library' }].map(sub => (
+                        <button key={sub.key} onClick={() => setMusicSourceTab(sub.key)}
+                          className={`em-subtab${musicSourceTab === sub.key ? ' em-subtab-active' : ''}`}>
+                          {sub.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Upload sub-tab */}
+                    {musicSourceTab === 'upload' && (
+                      <div className="em-section">
+                        <button className="em-upload-btn" onClick={() => bgMusicInputRef.current?.click()} disabled={editSaving}>
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+                          Upload MP3 / WAV / M4A
+                        </button>
+                        <input ref={bgMusicInputRef} type="file"
+                          accept=".mp3,.wav,.m4a,audio/mpeg,audio/wav,audio/mp4,audio/x-m4a"
+                          onChange={onUploadBgMusic} style={{ display: 'none' }} />
+                        {bgMusicFileName ? (
+                          <div className="em-music-file-card">
+                            <span className="em-music-file-icon">🎵</span>
+                            <div className="em-music-file-info">
+                              <div className="em-music-file-name">{bgMusicFileName}</div>
+                              {bgMusicFileDuration != null && (
+                                <div className="em-music-file-dur">{fmtDur(Math.round(bgMusicFileDuration))}</div>
+                              )}
+                            </div>
+                            <button className="em-remove-icon-btn" title="Remove" onClick={() => {
+                              setBgMusicFile(null);
+                              if (bgMusicFileUrl) { URL.revokeObjectURL(bgMusicFileUrl); setBgMusicFileUrl(null); }
+                              setBgMusicFileName('');
+                              setBgMusicFileDuration(null);
+                            }}>
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                            </button>
+                          </div>
+                        ) : (
+                          <p className="em-empty-hint">No music file selected.</p>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Library sub-tab */}
+                    {musicSourceTab === 'library' && (
+                      <div className="em-section">
+                        <div className="em-genre-row">
+                          {MUSIC_GENRES.map(g => (
+                            <button key={g} onClick={() => setMusicLibraryGenre(g)}
+                              className={`em-genre-pill ${musicLibraryGenre === g ? 'em-genre-active' : 'em-genre-idle'}`}>
+                              {g}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="em-track-list">
+                          {DEFAULT_MUSIC_LIBRARY.filter(tr => musicLibraryGenre === 'All' || tr.genre === musicLibraryGenre).map(track => (
+                            <div key={track.id}
+                              onClick={() => setSelectedLibraryTrack(selectedLibraryTrack?.id === track.id ? null : track)}
+                              className={`em-track ${selectedLibraryTrack?.id === track.id ? 'em-track-selected' : 'em-track-idle'}`}>
+                              <div className="em-track-info">
+                                <div className={`em-track-name${selectedLibraryTrack?.id === track.id ? ' em-track-name-sel' : ''}`}>{track.name}</div>
+                                <div className="em-track-meta">{track.genre} · {fmtDur(track.duration)}</div>
+                              </div>
+                              <button className="em-track-play" title={previewingTrackId === track.id ? 'Stop' : 'Preview'}
+                                onClick={(e) => { e.stopPropagation(); toggleTrackPreview(track); }}>
+                                {previewingTrackId === track.id ? '⏹' : '▶'}
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                        {selectedLibraryTrack && (
+                          <div className="em-selected-badge">✓ {selectedLibraryTrack.name}</div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Music settings — shown when music is selected */}
+                    {(bgMusicFileName || selectedLibraryTrack) && (
+                      <div className="em-settings-card">
+                        <div className="em-section-label">Timing &amp; Effects</div>
+                        <div className="em-settings-grid">
+                          {[
+                            { label: 'Start in video (sec)', value: bgMusicStartInVideo, onChange: (v) => setBgMusicStartInVideo(Math.max(0, parseFloat(v) || 0)), placeholder: '0' },
+                            { label: 'Trim start (sec)',     value: bgMusicTrimStart,    onChange: (v) => setBgMusicTrimStart(Math.max(0, parseFloat(v) || 0)),    placeholder: '0' },
+                            { label: 'Trim end (sec)',       value: bgMusicTrimEnd,      onChange: (v) => setBgMusicTrimEnd(v),                                     placeholder: 'auto' },
+                          ].map(({ label, value, onChange, placeholder }) => (
+                            <div key={label}>
+                              <div className="em-input-label">{label}</div>
+                              <input type="number" min="0" step="1" value={value} placeholder={placeholder}
+                                onChange={e => onChange(e.target.value)}
+                                className="em-num-input" />
+                            </div>
+                          ))}
+                        </div>
+                        <div className="em-check-row">
+                          {[
+                            { checked: bgMusicFadeIn,  onChange: setBgMusicFadeIn,  label: 'Fade In'  },
+                            { checked: bgMusicFadeOut, onChange: setBgMusicFadeOut, label: 'Fade Out' },
+                            { checked: bgMusicLoop,    onChange: setBgMusicLoop,    label: 'Loop'     },
+                          ].map(({ checked, onChange, label }) => (
+                            <label key={label} className="em-check-label">
+                              <input type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)}
+                                style={{ accentColor: '#6366f1', width: 14, height: 14 }} />
+                              {label}
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                  </div>
+                )}
+
               </div>
             </div>
+
+            {/* Hidden audio for library preview */}
+            <audio ref={previewAudioRef} style={{ display: 'none' }} onEnded={() => setPreviewingTrackId(null)} onError={() => setPreviewingTrackId(null)} />
+
+            {/* ── Footer ── */}
+            <div className="em-footer">
+              <button className="em-btn-discard" onClick={closeEditModal} disabled={editSaving}>Discard</button>
+              <button className="em-btn-save" onClick={handleSaveEdit} disabled={editSaving}>
+                {editSaving ? (
+                  <><span className="em-spinner" />Rendering…</>
+                ) : (
+                  <><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Save &amp; Render</>
+                )}
+              </button>
+            </div>
+
           </div>
         </div>
       )}
@@ -1018,12 +1303,448 @@ export default function Recordings() {
           box-shadow: 0 4px 14px rgba(239,68,68,0.15);
         }
 
-        /* ── Edit modal responsive ──────────────────────────── */
-        @media (max-width: 900px) {
-          .recording-edit-grid {
-            grid-template-columns: 1fr !important;
-          }
+        /* ════════════════════════════════════════════════════
+           Edit Modal  (.em-*)  — light + dark theme aware
+           ════════════════════════════════════════════════════ */
+        .em-overlay {
+          position: fixed; inset: 0;
+          background: rgba(0,0,0,0.55);
+          backdrop-filter: blur(5px);
+          display: flex; align-items: center; justify-content: center;
+          z-index: 1200; padding: 16px; box-sizing: border-box;
         }
+        .em-dialog {
+          width: 100%; max-width: 1120px; max-height: 92vh;
+          background: var(--surface, #fff);
+          border: 1px solid var(--border, #e2e8f0);
+          border-radius: 20px;
+          box-shadow: 0 32px 80px rgba(0,0,0,0.22);
+          display: flex; flex-direction: column; overflow: hidden;
+        }
+        /* Header */
+        .em-header {
+          flex-shrink: 0;
+          display: flex; align-items: center; justify-content: space-between;
+          padding: 15px 22px;
+          border-bottom: 1px solid var(--border, #e2e8f0);
+          background: var(--surface2, #f8fafc);
+        }
+        .em-header-title {
+          font-size: 16px; font-weight: 700;
+          color: var(--text, #1e293b);
+          display: flex; align-items: center;
+        }
+        .em-header-sub {
+          font-size: 12px; margin-top: 3px;
+          color: var(--text-muted, #64748b);
+        }
+        .em-close-btn {
+          width: 32px; height: 32px; border-radius: 50%;
+          border: 1px solid var(--border, #e2e8f0);
+          background: var(--surface3, #f1f5f9);
+          color: var(--text-muted, #64748b);
+          cursor: pointer; display: flex; align-items: center; justify-content: center;
+          transition: background 0.15s, color 0.15s;
+        }
+        .em-close-btn:hover { background: #fee2e2; color: #ef4444; border-color: #fca5a5; }
+        .em-close-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        /* Body grid */
+        .em-body {
+          flex: 1; overflow: hidden;
+          display: grid;
+          grid-template-columns: minmax(0,1.75fr) minmax(0,1fr);
+        }
+        .em-left {
+          padding: 18px;
+          border-right: 1px solid var(--border, #e2e8f0);
+          overflow-y: auto;
+        }
+        .em-right {
+          padding: 18px;
+          color: var(--text, #1e293b);
+          display: flex; flex-direction: column;
+          overflow-y: auto;
+        }
+        /* Video area */
+        .em-video-wrap {
+          background: #000;
+          border-radius: 12px; overflow: hidden;
+          position: relative;
+          box-shadow: 0 6px 24px rgba(0,0,0,0.3);
+        }
+        .em-video {
+          width: 100%; display: block;
+          max-height: 42vh; object-fit: contain;
+        }
+        /* Controls card below video */
+        .em-controls-card {
+          margin-top: 12px;
+          background: var(--surface2, #f8fafc);
+          border: 1px solid var(--border, #e2e8f0);
+          border-radius: 12px;
+          padding: 12px 16px;
+          display: flex; flex-direction: column; gap: 10px;
+        }
+        .em-controls-top {
+          display: flex; align-items: center; gap: 10px;
+        }
+        .em-play-btn {
+          display: inline-flex; align-items: center; gap: 6px;
+          padding: 7px 16px; border-radius: 8px; border: none;
+          background: #6366f1; color: #fff;
+          font-size: 13px; font-weight: 600; cursor: pointer;
+          transition: background 0.15s, transform 0.1s;
+          box-shadow: 0 2px 8px rgba(99,102,241,0.3);
+        }
+        .em-play-btn:hover { background: #4f46e5; transform: translateY(-1px); }
+        .em-controls-hint {
+          font-size: 12px; color: var(--text-muted, #64748b);
+        }
+        .em-vol-row {
+          display: flex; align-items: center; gap: 8px;
+        }
+        .em-vol-icon { flex-shrink: 0; opacity: 0.55; }
+        .em-vol-label {
+          font-size: 12px; color: var(--text-muted, #64748b);
+          min-width: 72px; white-space: nowrap;
+        }
+        .em-range { flex: 1; cursor: pointer; }
+        .em-range-purple { accent-color: #6366f1; }
+        .em-range-amber  { accent-color: #f59e0b; }
+        .em-vol-pct {
+          font-size: 12px; color: var(--text-muted, #64748b);
+          min-width: 38px; text-align: right; font-variant-numeric: tabular-nums;
+        }
+        /* Tabs */
+        .em-tabs {
+          display: flex; gap: 4px;
+          background: var(--surface3, #f1f5f9);
+          border-radius: 10px; padding: 4px;
+          margin-bottom: 16px; flex-shrink: 0;
+        }
+        .em-tab {
+          flex: 1; border: none; border-radius: 7px; padding: 8px 0;
+          font-size: 13px; font-weight: 500; cursor: pointer;
+          background: none; color: var(--text-muted, #64748b);
+          transition: background 0.15s, color 0.15s;
+        }
+        .em-tab-active {
+          background: #6366f1; color: #fff; font-weight: 700;
+          box-shadow: 0 2px 8px rgba(99,102,241,0.35);
+        }
+        /* Tab content */
+        .em-tab-content { display: flex; flex-direction: column; flex: 1; }
+        .em-section { margin-bottom: 18px; }
+        .em-section-label {
+          font-size: 11px; font-weight: 700; letter-spacing: 0.6px;
+          text-transform: uppercase; color: var(--text-dim, #94a3b8);
+          margin-bottom: 8px;
+        }
+        /* Upload button */
+        .em-upload-btn {
+          width: 100%; display: flex; align-items: center; justify-content: center; gap: 7px;
+          padding: 9px 12px; border-radius: 9px;
+          border: 1.5px dashed var(--border-light, #cbd5e1);
+          background: var(--surface2, #f8fafc);
+          color: var(--text-muted, #64748b);
+          font-size: 13px; font-weight: 500; cursor: pointer;
+          transition: border-color 0.15s, color 0.15s, background 0.15s;
+          margin-bottom: 10px;
+        }
+        .em-upload-btn:hover {
+          border-color: #6366f1; color: #6366f1;
+          background: rgba(99,102,241,0.05);
+        }
+        .em-upload-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+        /* Preview card */
+        .em-preview-card {
+          border-radius: 10px; overflow: hidden;
+          border: 1px solid var(--border, #e2e8f0);
+          background: var(--surface2, #f8fafc);
+          padding: 10px; display: flex; flex-direction: column; gap: 6px;
+          margin-bottom: 4px;
+        }
+        .em-preview-img {
+          width: 100%; max-height: 100px; object-fit: contain; display: block;
+          border-radius: 6px;
+        }
+        .em-remove-btn {
+          align-self: flex-start;
+          background: none; border: none; padding: 0;
+          font-size: 11px; color: #ef4444; cursor: pointer; font-weight: 600;
+        }
+        .em-remove-btn:hover { color: #dc2626; }
+        /* Empty / hint text */
+        .em-empty-hint {
+          font-size: 12px; color: var(--text-dim, #94a3b8);
+          margin: 0 0 4px;
+        }
+        .em-hint-text {
+          font-size: 11px; color: var(--text-dim, #94a3b8); margin: 0;
+        }
+        /* Radio group */
+        .em-radio-group {
+          display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+        }
+        .em-radio-label {
+          display: flex; align-items: center; gap: 7px;
+          font-size: 12px; cursor: pointer;
+          padding: 7px 10px; border-radius: 8px;
+          border: 1px solid var(--border, #e2e8f0);
+          background: var(--surface2, #f8fafc);
+          color: var(--text, #1e293b);
+          transition: border-color 0.15s, background 0.15s;
+          user-select: none;
+        }
+        .em-radio-label:has(input:checked) {
+          border-color: #6366f1;
+          background: rgba(99,102,241,0.07);
+          color: #6366f1; font-weight: 600;
+        }
+        .em-divider {
+          border: none; border-top: 1px solid var(--border, #e2e8f0);
+          margin: 4px 0 18px;
+        }
+        /* Music sub-tabs */
+        .em-subtabs {
+          display: flex; background: var(--surface3, #f1f5f9);
+          border-radius: 8px; overflow: hidden; margin-bottom: 14px;
+        }
+        .em-subtab {
+          flex: 1; border: none; padding: 8px 0; font-size: 12px; font-weight: 500;
+          cursor: pointer; background: none;
+          color: var(--text-muted, #64748b);
+          transition: background 0.15s, color 0.15s;
+        }
+        .em-subtab-active {
+          background: rgba(99,102,241,0.18); color: #6366f1; font-weight: 700;
+        }
+        /* Volume card */
+        .em-vol-card {
+          background: var(--surface2, #f8fafc);
+          border: 1px solid var(--border, #e2e8f0);
+          border-radius: 12px; padding: 13px 15px; margin-bottom: 14px;
+        }
+        /* Genre pills */
+        .em-genre-row { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
+        .em-genre-pill {
+          border: none; border-radius: 20px; padding: 3px 11px; font-size: 11px;
+          cursor: pointer; transition: background 0.15s, color 0.15s; font-weight: 500;
+        }
+        .em-genre-active { background: #6366f1; color: #fff; }
+        .em-genre-idle {
+          background: var(--surface3, #f1f5f9);
+          color: var(--text-muted, #64748b);
+        }
+        .em-genre-idle:hover { background: var(--border, #e2e8f0); }
+        /* Track list */
+        .em-track-list {
+          display: flex; flex-direction: column; gap: 5px;
+          max-height: 188px; overflow-y: auto;
+          margin-bottom: 8px; padding-right: 2px;
+        }
+        .em-track {
+          display: flex; align-items: center; justify-content: space-between;
+          border-radius: 9px; padding: 9px 11px; cursor: pointer;
+          border: 1px solid transparent;
+          transition: background 0.12s, border-color 0.12s;
+        }
+        .em-track-idle { background: var(--surface2, #f8fafc); }
+        .em-track-idle:hover { background: var(--surface3, #f1f5f9); }
+        .em-track-selected {
+          background: rgba(99,102,241,0.09);
+          border-color: rgba(99,102,241,0.35);
+        }
+        .em-track-info { flex: 1; min-width: 0; }
+        .em-track-name {
+          font-size: 13px; color: var(--text, #1e293b);
+          white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .em-track-name-sel { color: #6366f1; font-weight: 600; }
+        .em-track-meta { font-size: 11px; color: var(--text-dim, #94a3b8); margin-top: 1px; }
+        .em-track-play {
+          width: 30px; height: 30px; border-radius: 50%; border: none; cursor: pointer;
+          background: var(--surface3, #f1f5f9); color: #6366f1;
+          display: flex; align-items: center; justify-content: center;
+          font-size: 11px; flex-shrink: 0; margin-left: 8px;
+          transition: background 0.12s;
+        }
+        .em-track-play:hover { background: rgba(99,102,241,0.15); }
+        .em-selected-badge {
+          font-size: 12px; color: #6366f1; font-weight: 600;
+          padding: 5px 8px;
+          background: rgba(99,102,241,0.08); border-radius: 6px;
+        }
+        /* Music file card */
+        .em-music-file-card {
+          display: flex; align-items: center; gap: 10px;
+          background: rgba(99,102,241,0.07);
+          border: 1px solid rgba(99,102,241,0.25);
+          border-radius: 10px; padding: 10px 13px; margin-top: 4px;
+        }
+        .em-music-file-icon { font-size: 20px; flex-shrink: 0; }
+        .em-music-file-info { flex: 1; min-width: 0; }
+        .em-music-file-name {
+          font-size: 13px; font-weight: 600; color: var(--text, #1e293b);
+          white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .em-music-file-dur { font-size: 11px; color: var(--text-muted, #64748b); margin-top: 2px; }
+        .em-remove-icon-btn {
+          background: none; border: none; cursor: pointer;
+          color: var(--text-dim, #94a3b8); padding: 4px;
+          border-radius: 5px; display: flex; align-items: center;
+          transition: color 0.12s, background 0.12s;
+        }
+        .em-remove-icon-btn:hover { color: #ef4444; background: #fee2e2; }
+        /* Settings card */
+        .em-settings-card {
+          border-top: 1px solid var(--border, #e2e8f0);
+          padding-top: 14px; margin-top: 4px;
+        }
+        .em-settings-grid {
+          display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px;
+        }
+        .em-input-label {
+          font-size: 10px; color: var(--text-dim, #94a3b8); margin-bottom: 3px;
+          text-transform: uppercase; letter-spacing: 0.4px;
+        }
+        .em-num-input {
+          width: 100%;
+          background: var(--surface2, #f8fafc);
+          border: 1px solid var(--border, #e2e8f0);
+          border-radius: 7px; padding: 6px 9px;
+          color: var(--text, #1e293b); font-size: 12px;
+          box-sizing: border-box; outline: none;
+          transition: border-color 0.15s;
+        }
+        .em-num-input:focus { border-color: #6366f1; }
+        .em-check-row { display: flex; flex-wrap: wrap; gap: 14px; }
+        .em-check-label {
+          display: flex; align-items: center; gap: 7px;
+          font-size: 13px; cursor: pointer; user-select: none;
+          color: var(--text, #1e293b);
+        }
+        /* Footer */
+        .em-footer {
+          flex-shrink: 0;
+          display: flex; gap: 10px; padding: 13px 22px;
+          justify-content: flex-end; flex-wrap: wrap;
+          border-top: 1px solid var(--border, #e2e8f0);
+          background: var(--surface2, #f8fafc);
+        }
+        .em-btn-discard {
+          padding: 8px 20px; border-radius: 9px;
+          border: 1px solid var(--border-light, #cbd5e1);
+          background: var(--surface, #fff);
+          color: var(--text, #1e293b);
+          font-size: 14px; font-weight: 500; cursor: pointer;
+          transition: background 0.15s, border-color 0.15s;
+        }
+        .em-btn-discard:hover { background: var(--surface3, #f1f5f9); border-color: #94a3b8; }
+        .em-btn-discard:disabled { opacity: 0.45; cursor: not-allowed; }
+        .em-btn-save {
+          display: inline-flex; align-items: center; gap: 7px;
+          padding: 8px 22px; border-radius: 9px; border: none;
+          background: linear-gradient(135deg, #6366f1, #4f46e5);
+          color: #fff; font-size: 14px; font-weight: 600; cursor: pointer;
+          box-shadow: 0 4px 14px rgba(99,102,241,0.35);
+          transition: opacity 0.15s, transform 0.1s;
+        }
+        .em-btn-save:hover { opacity: 0.88; transform: translateY(-1px); }
+        .em-btn-save:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        /* Spinner */
+        .em-spinner {
+          display: inline-block; width: 13px; height: 13px;
+          border: 2px solid rgba(255,255,255,0.35);
+          border-top-color: #fff;
+          border-radius: 50%;
+          animation: em-spin 0.7s linear infinite;
+        }
+        @keyframes em-spin { to { transform: rotate(360deg); } }
+        /* Responsive */
+        @media (max-width: 860px) {
+          .em-body { grid-template-columns: 1fr !important; }
+          .em-left { border-right: none !important; border-bottom: 1px solid var(--border, #e2e8f0); }
+          .em-video { max-height: 35vh; }
+        }
+        /* Dark mode overrides */
+        [data-theme="dark"] .em-dialog {
+          background: #13132a;
+          border-color: #2a2a4a;
+          box-shadow: 0 32px 80px rgba(0,0,0,0.55);
+        }
+        [data-theme="dark"] .em-header {
+          background: #1c1c35;
+          border-color: #2a2a4a;
+        }
+        [data-theme="dark"] .em-header-title { color: #e8eaf6; }
+        [data-theme="dark"] .em-header-sub   { color: #8b8fad; }
+        [data-theme="dark"] .em-close-btn {
+          background: rgba(255,255,255,0.07);
+          border-color: #35355a; color: #8b8fad;
+        }
+        [data-theme="dark"] .em-close-btn:hover { background: rgba(239,68,68,0.15); color: #f87171; border-color: rgba(239,68,68,0.3); }
+        [data-theme="dark"] .em-left  { border-color: #2a2a4a; }
+        [data-theme="dark"] .em-right { color: #e8eaf6; }
+        [data-theme="dark"] .em-controls-card {
+          background: rgba(255,255,255,0.04);
+          border-color: #2a2a4a;
+        }
+        [data-theme="dark"] .em-controls-hint { color: #8b8fad; }
+        [data-theme="dark"] .em-vol-label { color: #8b8fad; }
+        [data-theme="dark"] .em-vol-pct   { color: #8b8fad; }
+        [data-theme="dark"] .em-tabs { background: rgba(255,255,255,0.05); }
+        [data-theme="dark"] .em-tab  { color: #8b8fad; }
+        [data-theme="dark"] .em-section-label { color: #5a5e7a; }
+        [data-theme="dark"] .em-upload-btn {
+          border-color: #35355a;
+          background: rgba(255,255,255,0.03);
+          color: #8b8fad;
+        }
+        [data-theme="dark"] .em-upload-btn:hover { border-color: #6366f1; color: #a5b4fc; background: rgba(99,102,241,0.08); }
+        [data-theme="dark"] .em-preview-card { background: rgba(255,255,255,0.05); border-color: #35355a; }
+        [data-theme="dark"] .em-empty-hint { color: #5a5e7a; }
+        [data-theme="dark"] .em-hint-text  { color: #5a5e7a; }
+        [data-theme="dark"] .em-radio-label { background: rgba(255,255,255,0.03); border-color: #2a2a4a; color: #c8cce8; }
+        [data-theme="dark"] .em-radio-label:has(input:checked) { background: rgba(99,102,241,0.15); color: #a5b4fc; border-color: rgba(99,102,241,0.45); }
+        [data-theme="dark"] .em-divider { border-color: #2a2a4a; }
+        [data-theme="dark"] .em-subtabs { background: rgba(255,255,255,0.05); }
+        [data-theme="dark"] .em-subtab { color: #8b8fad; }
+        [data-theme="dark"] .em-subtab-active { background: rgba(99,102,241,0.25); color: #a5b4fc; }
+        [data-theme="dark"] .em-vol-card { background: rgba(255,255,255,0.04); border-color: #2a2a4a; }
+        [data-theme="dark"] .em-genre-idle { background: rgba(255,255,255,0.07); color: #8b8fad; }
+        [data-theme="dark"] .em-genre-idle:hover { background: rgba(255,255,255,0.12); }
+        [data-theme="dark"] .em-track-idle { background: rgba(255,255,255,0.04); }
+        [data-theme="dark"] .em-track-idle:hover { background: rgba(255,255,255,0.07); }
+        [data-theme="dark"] .em-track-selected { background: rgba(99,102,241,0.18); border-color: rgba(99,102,241,0.45); }
+        [data-theme="dark"] .em-track-name { color: #c8cce8; }
+        [data-theme="dark"] .em-track-name-sel { color: #a5b4fc; }
+        [data-theme="dark"] .em-track-meta { color: #5a5e7a; }
+        [data-theme="dark"] .em-track-play { background: rgba(255,255,255,0.08); }
+        [data-theme="dark"] .em-track-play:hover { background: rgba(99,102,241,0.3); }
+        [data-theme="dark"] .em-selected-badge { background: rgba(99,102,241,0.15); color: #a5b4fc; }
+        [data-theme="dark"] .em-music-file-card { background: rgba(99,102,241,0.12); border-color: rgba(99,102,241,0.3); }
+        [data-theme="dark"] .em-music-file-name { color: #e8eaf6; }
+        [data-theme="dark"] .em-music-file-dur  { color: #8b8fad; }
+        [data-theme="dark"] .em-remove-icon-btn { color: #5a5e7a; }
+        [data-theme="dark"] .em-remove-icon-btn:hover { color: #f87171; background: rgba(239,68,68,0.12); }
+        [data-theme="dark"] .em-settings-card { border-color: #2a2a4a; }
+        [data-theme="dark"] .em-input-label { color: #5a5e7a; }
+        [data-theme="dark"] .em-num-input {
+          background: rgba(255,255,255,0.05);
+          border-color: #35355a; color: #e8eaf6;
+        }
+        [data-theme="dark"] .em-num-input:focus { border-color: #6366f1; }
+        [data-theme="dark"] .em-check-label { color: #c8cce8; }
+        [data-theme="dark"] .em-footer {
+          background: #1c1c35;
+          border-color: #2a2a4a;
+        }
+        [data-theme="dark"] .em-btn-discard {
+          background: rgba(255,255,255,0.05);
+          border-color: #35355a; color: #c8cce8;
+        }
+        [data-theme="dark"] .em-btn-discard:hover { background: rgba(255,255,255,0.1); border-color: #5a5e7a; }
 
         /* ── Card responsive ─────────────────────────────────── */
         @media (max-width: 700px) {
