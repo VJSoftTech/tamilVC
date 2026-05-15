@@ -65,66 +65,97 @@ export const useRecording = (meetingId, messages = {}) => {
    * @param {number} orientationAngle  Normalised screen.orientation.angle (0/90/180/270)
    * @param {boolean} canvasIsPortrait  Whether the recording canvas is taller than wide
    */
-  const drawOriented = (ctx, video, cellX, cellY, cellW, cellH, orientationAngle, canvasIsPortrait) => {
-    const vw = video.videoWidth  || cellW;
-    const vh = video.videoHeight || cellH;
+//   const drawOriented = (ctx, video, cellX, cellY, cellW, cellH, orientationAngle, canvasIsPortrait) => {
+//     const vw = video.videoWidth  || cellW;
+//     const vh = video.videoHeight || cellH;
 
-    const videoIsPortrait = vh > vw;
-    const cellIsPortrait  = cellH > cellW;
-    let rotation = 0; // degrees
+//     const videoIsPortrait = vh > vw;
+//     const cellIsPortrait  = cellH > cellW;
+//     let rotation = 0; // degrees
 
-    if (videoIsPortrait !== cellIsPortrait) {
-      // Stream pixels are portrait but canvas cell is landscape (or vice versa).
-      // The browser did NOT auto-rotate the stream — we must do it manually.
-      //
-      // angle=90  → device landscape CCW → "top" is at RIGHT of pixel buffer → rotate CCW (-90°)
-      // angle=270 → device landscape CW  → "top" is at LEFT of pixel buffer  → rotate CW  (+90°)
-      // angle=0/180 → portrait mismatch (rare) → best-effort 90° rotation
-      if (orientationAngle === 270) {
-        rotation = 90;   // landscape-right (home button left): rotate CW
-      } else if (orientationAngle === 90) {
-        rotation = -90;  // landscape-left (home button right): rotate CCW
-      } else if (orientationAngle === 180) {
-        rotation = 180;  // upside-down portrait in landscape cell
-      } else {
-        rotation = 90;   // angle=0 fallback
-      }
-    } else if (!videoIsPortrait && !canvasIsPortrait && orientationAngle === 270) {
-      // Android landscape-right edge case: both stream AND canvas are landscape,
-      // but pixel data is 180° flipped relative to what the user sees.
-      rotation = 180;
-    }
+//     if (videoIsPortrait !== cellIsPortrait) {
+//       // Stream pixels are portrait but canvas cell is landscape (or vice versa).
+//       // The browser did NOT auto-rotate the stream — we must do it manually.
+//       //
+//       // angle=90  → device landscape CCW → "top" is at RIGHT of pixel buffer → rotate CCW (-90°)
+//       // angle=270 → device landscape CW  → "top" is at LEFT of pixel buffer  → rotate CW  (+90°)
+//       // angle=0/180 → portrait mismatch (rare) → best-effort 90° rotation
+//       if (orientationAngle === 270) {
+//         rotation = 90;   // landscape-right (home button left): rotate CW
+//       } else if (orientationAngle === 90) {
+//         rotation = -90;  // landscape-left (home button right): rotate CCW
+//       } else if (orientationAngle === 180) {
+//         rotation = 180;  // upside-down portrait in landscape cell
+//       } else {
+//         rotation = 90;   // angle=0 fallback
+//       }
+//     } else if (!videoIsPortrait && !canvasIsPortrait && orientationAngle === 270) {
+//       // Android landscape-right edge case: both stream AND canvas are landscape,
+//       // but pixel data is 180° flipped relative to what the user sees.
+//       rotation = 180;
+//     }
 
-    ctx.save();
-    ctx.fillStyle = '#111118';
-    ctx.fillRect(cellX, cellY, cellW, cellH);
+//     ctx.save();
+//     ctx.fillStyle = '#111118';
+//     ctx.fillRect(cellX, cellY, cellW, cellH);
 
-    const cx = cellX + cellW / 2;
-    const cy = cellY + cellH / 2;
-    ctx.translate(cx, cy);
+//     const cx = cellX + cellW / 2;
+//     const cy = cellY + cellH / 2;
+//     ctx.translate(cx, cy);
 
-    if (rotation !== 0) {
-      ctx.rotate(rotation * Math.PI / 180);
-      // After ±90° rotation the video's effective w/h are swapped relative to
-      // the cell; fit into the swapped space.
-      const absRot = Math.abs(rotation);
-      const needsSwap = absRot === 90 || absRot === 270;
-      const fitW = needsSwap ? cellH : cellW;
-      const fitH = needsSwap ? cellW : cellH;
-      const scale = Math.min(fitW / vw, fitH / vh);
-      const dw = vw * scale;
-      const dh = vh * scale;
-      try { ctx.drawImage(video, -dw / 2, -dh / 2, dw, dh); } catch {}
-    } else {
-      const scale = Math.min(cellW / vw, cellH / vh);
-      const dw = vw * scale;
-      const dh = vh * scale;
-      try { ctx.drawImage(video, -dw / 2, -dh / 2, dw, dh); } catch {}
-    }
+//     if (rotation !== 0) {
+//       ctx.rotate(rotation * Math.PI / 180);
+//       // After ±90° rotation the video's effective w/h are swapped relative to
+//       // the cell; fit into the swapped space.
+//       const absRot = Math.abs(rotation);
+//       const needsSwap = absRot === 90 || absRot === 270;
+//       const fitW = needsSwap ? cellH : cellW;
+//       const fitH = needsSwap ? cellW : cellH;
+// const scale = Math.max(fitW / vw, fitH / vh);
+//       const dw = vw * scale;
+//       const dh = vh * scale;
+//       try { ctx.drawImage(video, -dw / 2, -dh / 2, dw, dh); } catch {}
+//     } else {
+// const scale = Math.max(cellW / vw, cellH / vh);
+//       const dw = vw * scale;
+//       const dh = vh * scale;
+//       try { ctx.drawImage(video, -dw / 2, -dh / 2, dw, dh); } catch {}
+//     }
 
-    ctx.restore();
-  };
+//     ctx.restore();
+//   };
+const drawOriented = (
+  ctx,
+  video,
+  cellX,
+  cellY,
+  cellW,
+  cellH
+) => {
+  const vw = video.videoWidth || cellW;
+  const vh = video.videoHeight || cellH;
 
+  ctx.save();
+
+  // background
+  ctx.fillStyle = '#111118';
+  ctx.fillRect(cellX, cellY, cellW, cellH);
+
+  // COVER fit without rotation
+  const scale = Math.max(cellW / vw, cellH / vh);
+
+  const dw = vw * scale;
+  const dh = vh * scale;
+
+  const dx = cellX + (cellW - dw) / 2;
+  const dy = cellY + (cellH - dh) / 2;
+
+  try {
+    ctx.drawImage(video, dx, dy, dw, dh);
+  } catch {}
+
+  ctx.restore();
+};
   // ── Compute tile positions for n participants ─────────────────────
   const computeLayout = (n, canvasW, canvasH) => {
     if (n === 0) return [];
@@ -146,7 +177,7 @@ export const useRecording = (meetingId, messages = {}) => {
       ];
     }
 
-    if (n === 3) {
+     if (n === 3) {
       if (canvasH > canvasW) {
         const h3 = canvasH / 3;
         return [
@@ -254,8 +285,9 @@ export const useRecording = (meetingId, messages = {}) => {
       videos.forEach((v, i) => {
         if (i < positions.length) {
           const p = positions[i];
-          drawOriented(ctx, v, p.x, p.y, p.w, p.h, orientationAngle, isPortrait);
-        }
+        //  drawOriented(ctx, v, p.x, p.y, p.w, p.h, orientationAngle, isPortrait);
+      drawOriented(ctx, v, p.x, p.y, p.w, p.h);  
+      }
       });
 
       const wm = watermarkImageRef.current;
@@ -300,11 +332,42 @@ export const useRecording = (meetingId, messages = {}) => {
     ]);
   }, []);
 
-  const startRecording = useCallback(async (streams, isPortrait = false) => {
-    if (!streams.length) {
-      alert(messages.noActiveStreams || 'No active camera streams to record.');
+const startRecording = useCallback(async (streams, isPortrait = false) => {
+  if (!streams.length) {
+    alert(messages.noActiveStreams || 'No active camera streams to record.');
+    return;
+  }
+
+  // BLOCK recording if phone rotated but auto-rotate OFF
+  const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+  if (isMobile) {
+    const isLandscapePhysical = window.innerWidth > window.innerHeight;
+
+    // screen.orientation.angle stays 0 when auto-rotate OFF
+    const orientationAngle =
+      typeof screen?.orientation?.angle === 'number'
+        ? screen.orientation.angle
+        : 0;
+
+    const autoRotateOff =
+      isLandscapePhysical && orientationAngle === 0;
+
+    if (autoRotateOff) {
+      alert('Please enable Auto Rotate before recording.');
       return;
     }
+  }
+
+
+const initialOrientation =
+  window.innerWidth > window.innerHeight
+    ? 'landscape'
+    : 'portrait';
+
+window.__LOCK_RECORDING_ORIENTATION__ = initialOrientation;
+
+    
     const composite = buildCompositeStream(streams, isPortrait);
     const mimeType  = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
       ? 'video/webm;codecs=vp9,opus'
@@ -333,6 +396,7 @@ export const useRecording = (meetingId, messages = {}) => {
     recorder.onstop = async () => {
       const blob = new Blob(chunksRef.current, { type: 'video/webm' });
       const dur  = Math.floor((Date.now() - startTimeRef.current) / 1000);
+      console.log('Recording blob size:', blob.size, 'bytes');
       setIsRecording(false);
       setIsSaving(true);
 
@@ -348,10 +412,13 @@ export const useRecording = (meetingId, messages = {}) => {
         fd.append('meeting_id', meetingId);
         fd.append('duration', dur);
         fd.append('recording', blob, 'recording.webm');
+        console.log('Saving recording to API...');
         const res = await recordingAPI.save(fd);
+        console.log('Recording saved successfully:', res.data);
         setIsSaving(false);
         resolve(res.data);
-      } catch {
+      } catch (error) {
+        console.error('Recording save failed:', error);
         setIsSaving(false);
         resolve(null);
       }

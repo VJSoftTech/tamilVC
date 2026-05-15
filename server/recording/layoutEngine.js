@@ -132,9 +132,16 @@ function amix(count) {
  * Compute optimal grid dimensions (cols × rows) for n participants.
  * Chosen to keep tiles close to 16:9 and minimise empty space.
  */
-function computeGrid(n, W, H) {
-  if (n <= 1)  return { cols: 1, rows: 1 };
-  if (n === 2) return W >= H ? { cols: 2, rows: 1 } : { cols: 1, rows: 2 };
+//function computeGrid(n, W, H) {
+function computeGrid(n, W, H, orientation)  {
+if (n <= 1)  return { cols: 1, rows: 1 };
+ // if (n === 2) return W >= H ? { cols: 2, rows: 1 } : { cols: 1, rows: 2 };
+ 
+ if (n === 2) {
+  return orientation === 'portrait'
+    ? { cols: 1, rows: 2 }
+    : { cols: 2, rows: 1 };
+}
   // n=3: portrait stacks 3 rows (no gaps); landscape uses 2×2 (last tile centred)
   if (n === 3) return W >= H ? { cols: 2, rows: 2 } : { cols: 1, rows: 3 };
   if (n <= 4)  return { cols: 2, rows: 2 };
@@ -155,43 +162,62 @@ function computeGrid(n, W, H) {
  *
  * Returns an array of { x, y, w, h } for each of the n tiles.
  */
+// function computeTilePositions(n, cols, rows, W, H) {
+//   const lastRowCount = (n % cols === 0) ? cols : (n % cols);
+//   const positions = [];
+
+//   // Uniform tile size for last-row centering
+//   const uniformTW = Math.floor(W / cols);
+//   const uniformTH = Math.floor(H / rows);
+
+//   for (let i = 0; i < n; i++) {
+//     const row  = Math.floor(i / cols);
+//     const col  = i % cols;
+//     const isLastRow    = row === rows - 1;
+//     const isPartialRow = isLastRow && lastRowCount < cols;
+
+//     let x, y, w, h;
+
+//     if (isPartialRow) {
+//       // Centre the partial last row; tiles all have the same size
+//       const rowStartX = Math.floor((W - lastRowCount * uniformTW) / 2);
+//       x = rowStartX + col * uniformTW;
+//       y = Math.floor(row * H / rows);
+//       w = uniformTW;
+//       h = H - y;          // last row gets remaining pixels (≥ uniformTH)
+//     } else {
+//       // Full row: integer-partition for pixel-perfect fill
+//       x = Math.floor(col * W / cols);
+//       y = Math.floor(row * H / rows);
+//       w = Math.floor((col + 1) * W / cols) - x;
+//       h = Math.floor((row + 1) * H / rows) - y;
+//     }
+
+//     positions.push({ x, y, w, h });
+//   }
+
+//   return positions;
+// }
 function computeTilePositions(n, cols, rows, W, H) {
-  const lastRowCount = (n % cols === 0) ? cols : (n % cols);
   const positions = [];
 
-  // Uniform tile size for last-row centering
-  const uniformTW = Math.floor(W / cols);
-  const uniformTH = Math.floor(H / rows);
+  const tileW = Math.floor(W / cols);
+  const tileH = Math.floor(H / rows);
 
   for (let i = 0; i < n; i++) {
-    const row  = Math.floor(i / cols);
-    const col  = i % cols;
-    const isLastRow    = row === rows - 1;
-    const isPartialRow = isLastRow && lastRowCount < cols;
+    const row = Math.floor(i / cols);
+    const col = i % cols;
 
-    let x, y, w, h;
-
-    if (isPartialRow) {
-      // Centre the partial last row; tiles all have the same size
-      const rowStartX = Math.floor((W - lastRowCount * uniformTW) / 2);
-      x = rowStartX + col * uniformTW;
-      y = Math.floor(row * H / rows);
-      w = uniformTW;
-      h = H - y;          // last row gets remaining pixels (≥ uniformTH)
-    } else {
-      // Full row: integer-partition for pixel-perfect fill
-      x = Math.floor(col * W / cols);
-      y = Math.floor(row * H / rows);
-      w = Math.floor((col + 1) * W / cols) - x;
-      h = Math.floor((row + 1) * H / rows) - y;
-    }
-
-    positions.push({ x, y, w, h });
+    positions.push({
+      x: col * tileW,
+      y: row * tileH,
+      w: tileW,
+      h: tileH,
+    });
   }
 
   return positions;
 }
-
 // ---------------------------------------------------------------------------
 // Layout builders
 // ---------------------------------------------------------------------------
@@ -206,8 +232,7 @@ function computeTilePositions(n, cols, rows, W, H) {
 function buildDynamicGridLayout(ordered, W, H, orientation) {
   const n = ordered.length;
   const parts = [];
-  const { cols, rows } = computeGrid(n, W, H);
-  const positions = computeTilePositions(n, cols, rows, W, H);
+const { cols, rows } = computeGrid(n, W, H, orientation);  const positions = computeTilePositions(n, cols, rows, W, H);
 
   // 1. Scale every tile (cover mode: fill cell, centre-crop)
   for (let i = 0; i < n; i++) {
